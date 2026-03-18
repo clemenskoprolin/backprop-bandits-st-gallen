@@ -102,56 +102,49 @@ async def chat_stream(req: ChatRequest):
         # 1. Identify session
         yield _sse_event("session", {"session_id": session.session_id, "message_id": message_id})
 
-        # 2. Thinking steps (stub)
-        thinking_steps = [
-            "Parsing your question...",
-            "Searching relevant test result columns...",
-            "Building query...",
-        ]
-        for step in thinking_steps:
-            await asyncio.sleep(0.05)  # simulate LLM latency
-            yield _sse_event("thinking", {"step": step})
-
-        # 3. Query used (stub)
-        query = "SELECT material, AVG(tensile_strength), STDDEV(tensile_strength) FROM test_results GROUP BY material"
-        await asyncio.sleep(0.05)
-        yield _sse_event("query", {"query_used": query})
-
-        # 4. Text response (chunked stub)
-        text_chunks = [
-            "Based on the available test data, ",
-            "here is a summary of tensile strength by material. ",
-            "This is a stub response — connect your LLM and data layer to populate real results.",
-        ]
+        from src.agent import agent
+        from langchain_core.messages import HumanMessage
+        config = {"configurable": {"thread_id": session.session_id}}
+        
         full_text = ""
-        for chunk in text_chunks:
-            await asyncio.sleep(0.05)
-            full_text += chunk
-            yield _sse_event("text", {"chunk": chunk})
-
-        # 5. Visualization (stub bar chart)
-        visualization = VisualizationBlock(
-            type="chart",
-            data={
-                "chart_type": "bar",
-                "title": "Average Tensile Strength by Material",
-                "x_label": "Material",
-                "y_label": "Tensile Strength (MPa)",
-                "series": [
-                    {"label": "Material A", "value": 420.5},
-                    {"label": "Material B", "value": 398.2},
-                ],
-            },
-        )
-        yield _sse_event("visualization", visualization.model_dump())
-
-        # 6. Follow-up suggestions
-        followups = [
-            "Would you like to see the trend over time?",
-            "Should I run a statistical significance test between material A and B?",
-            "Want to filter by a specific batch or date range?",
-        ]
-        yield _sse_event("followups", {"suggestions": followups})
+        visualization = None
+        
+        async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
+            kind = event["event"]
+            if kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    full_text += chunk.content
+                    yield _sse_event("text", {"chunk": chunk.content})
+            elif kind == "on_tool_start":
+                tool_name = event["name"]
+                if tool_name != "render_visualization":
+                    yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
+                else:
+                    yield _sse_event("thinking", {"step": "Rendering visualization..."})
+            elif kind == "on_tool_end":
+                if event["name"] == "render_visualization":
+                    try:
+                        import json
+                        kwargs = event['data'].get("input", {})
+                        series_data = kwargs.get("series_json", "[]")
+                        if isinstance(series_data, str):
+                            series_data = json.loads(series_data)
+                            
+                        vis = VisualizationBlock(
+                            type="chart",
+                            data={
+                                "chart_type": kwargs.get("chart_type", "bar"),
+                                "title": kwargs.get("title", ""),
+                                "x_label": kwargs.get("x_label", ""),
+                                "y_label": kwargs.get("y_label", ""),
+                                "series": series_data,
+                            },
+                        )
+                        visualization = vis
+                        yield _sse_event("visualization", vis.model_dump())
+                    except Exception as e:
+                        print("Visualization rendering error:", e)
 
         # 7. Persist assistant message
         session.messages.append(
@@ -160,7 +153,7 @@ async def chat_stream(req: ChatRequest):
                 role="assistant",
                 content=full_text,
                 visualization=visualization,
-                query_used=query,
+                query_used=None,
             )
         )
 
@@ -182,33 +175,52 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     session.messages.append(Message(role="user", content=req.message))
 
-    query = "SELECT material, AVG(tensile_strength) FROM test_results GROUP BY material"
-    text = (
-        "Based on the available test data, here is a summary of tensile strength by material. "
-        "This is a stub response — connect your LLM and data layer to populate real results."
-    )
-    visualization = VisualizationBlock(
-        type="chart",
-        data={
-            "chart_type": "bar",
-            "title": "Average Tensile Strength by Material",
-            "x_label": "Material",
-            "y_label": "Tensile Strength (MPa)",
-            "series": [
-                {"label": "Material A", "value": 420.5},
-                {"label": "Material B", "value": 398.2},
-            ],
-        },
-    )
-    followups = [
-        "Would you like to see the trend over time?",
-        "Should I run a statistical significance test between material A and B?",
-    ]
-    thinking = [
-        "Parsing your question...",
-        "Searching relevant test result columns...",
-        "Building query...",
-    ]
+    query = None
+    
+    from src.agent import agent
+    from langchain_core.messages import HumanMessage
+    config = {"configurable": {"thread_id": session.session_id}}
+    response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
+    
+    # Process output
+    messages = response['messages']
+    ai_msg = messages[-1]
+    text = ai_msg.content
+    visualization = None
+    thinking = []
+    
+    # Check if render_visualization was called to fetch the block
+    for msg in reversed(messages):
+        if getattr(msg, "name", None) == "render_visualization":
+            # Extract visualization kwargs from the previous AIMessage's tool_call
+            for prior_msg in reversed(messages):
+                if prior_msg.tool_calls:
+                    for tc in prior_msg.tool_calls:
+                        if tc['name'] == 'render_visualization':
+                            # Build the visualization block
+                            import json
+                            kwargs = tc['args']
+                            series_data = kwargs.get("series_json", "[]")
+                            if isinstance(series_data, str):
+                                try:
+                                    series_data = json.loads(series_data)
+                                except:
+                                    series_data = []
+                            visualization = VisualizationBlock(
+                                type="chart",
+                                data={
+                                    "chart_type": kwargs.get("chart_type", "bar"),
+                                    "title": kwargs.get("title", ""),
+                                    "x_label": kwargs.get("x_label", ""),
+                                    "y_label": kwargs.get("y_label", ""),
+                                    "series": series_data,
+                                },
+                            )
+                            break
+                    if visualization: break
+            if visualization: break
+        if getattr(msg, "name", None) in ["get_test", "search_tests", "get_aggregated_data_for_chart"]:
+            thinking.append(f"Used tool: {msg.name}")
 
     session.messages.append(
         Message(
@@ -225,7 +237,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         message_id=message_id,
         text=text,
         visualization=visualization,
-        followups=followups,
+        followups=[],
         query_used=query,
         thinking=thinking,
     )
