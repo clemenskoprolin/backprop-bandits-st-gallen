@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from retriever import RAGRetriever
-from ingestor import ingest_files
+from ingestor import ingest_files, clear_database
 
 
 app = FastAPI(title="RAG Microservice")
@@ -28,6 +28,11 @@ def generate_context(request: ContextRequest):
         return {"context": context}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/clear_database")
+def clear_db():
+    clear_database()
+    return {"success": True}
 
 if __name__ == "__main__":
     import uvicorn
