@@ -84,7 +84,7 @@ export function ChatInput({
             </Button>
           </div>
         </div>
-        
+
         {/* Template button and helper text */}
         <div className="flex items-center justify-between">
           <TemplatesDialog onSelectTemplate={handleTemplateSelect} />
