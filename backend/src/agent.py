@@ -249,8 +249,11 @@ def render_visualization(
             )
     return "Visualization successfully rendered on UI."
 
+
 @tool
-def render_text_block(title: str, content: str, replace_widget_id: str = "", widget_size: str = "1x2") -> str:
+def render_text_block(
+    title: str, content: str, replace_widget_id: str = "", widget_size: str = "1x2"
+) -> str:
     """
     Render a Markdown text block (headlines + paragraphs) on the user's dashboard.
     Use this for structured analysis summaries, key findings, or explanatory text
@@ -315,7 +318,9 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
 
 
 @tool
-def run_python_analysis(code: str, data_json: str = "", data_id: str = "", data_ids: list[str] = []) -> str:
+def run_python_analysis(
+    code: str, data_json: str = "", data_id: str = "", data_ids: list[str] = []
+) -> str:
     """
     Execute a Python code snippet for statistical analysis on material testing data.
 
@@ -469,8 +474,13 @@ def run_python_analysis(code: str, data_json: str = "", data_id: str = "", data_
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
 custom_tools = [run_python_analysis]
-tool_node = ToolNode(custom_tools)
-dashboard_tools = [render_visualization, render_text_block, remove_widget, reorder_dashboard]
+dashboard_tools = [
+    render_visualization,
+    render_text_block,
+    remove_widget,
+    reorder_dashboard,
+]
+tool_node = ToolNode(custom_tools + dashboard_tools)
 visualization_tool = ToolNode(dashboard_tools)
 submit_tool = ToolNode([submit_answer])
 
@@ -748,9 +758,10 @@ class Agent:
             for w in self.dashboard_widgets:
                 selected_marker = " ⭐ SELECTED" if w.get("selected") else ""
                 desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)}){selected_marker}"
-                pts = w.get('selected_data_points', [])
+                pts = w.get("selected_data_points", [])
                 if pts:
                     import json as _json
+
                     desc += f"\n  Selected data points: {_json.dumps(pts)}"
                 widget_descriptions.append(desc)
             selected_note = (
@@ -784,7 +795,8 @@ You can reference existing widgets when answering. If the user asks to rearrange
         for Measurements, take a look at the channelParameterMap
         some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
 
-        system_prompt = """You are an AI material testing assistant with MongoDB database access.
+        system_prompt = (
+            """You are an AI material testing assistant with MongoDB database access.
 
         {DB_CONTEXT}
 
@@ -858,9 +870,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         Dashboard also supports text/headline widgets via render_text_block (handled in a later step).
         If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
-        """ + similar_data + dashboard_context
+        """
+            + similar_data
+            + dashboard_context
+        )
 
-        output_system_prompt = """You are a material testing AI assistant.
+        output_system_prompt = (
+            """You are a material testing AI assistant.
 
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
@@ -872,7 +888,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - KPI cards for key metrics
         - Text/headline widgets with Markdown content (summaries, reports, key findings)
         Never tell the user that text or headline widgets are unsupported — they are fully supported.
-        """ + similar_data + be_professional
+        """
+            + similar_data
+            + be_professional
+        )
 
         intermediate_output_system_prompt = (
             """briefly summarize the findings
@@ -902,7 +921,8 @@ You can reference existing widgets when answering. If the user asks to rearrange
             + similar_data
         )
 
-        visualizer_system_prompt = """You are CoMat, an AI material testing assistant.
+        visualizer_system_prompt = (
+            """You are CoMat, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
         use the render_visualization function to visualize the data. Visualize if possible!
         Render a chart on the user's dashboard.
@@ -950,7 +970,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
           from being pinned to the dashboard alongside charts.
         Do NOT create a text block unprompted for every response — only when it adds lasting dashboard value.
         Never use a text block instead of a chart or table when data visualization is more appropriate.
-        Use Markdown: ## for major sections, ### for subsections, **bold** for emphasis, bullet lists for findings.""" + similar_data + dashboard_context
+        Use Markdown: ## for major sections, ### for subsections, **bold** for emphasis, bullet lists for findings."""
+            + similar_data
+            + dashboard_context
+        )
 
         request_metrics = _text_metrics(self.message)
         similar_metrics = _text_metrics(self.similar_text)
@@ -1050,15 +1073,24 @@ You can reference existing widgets when answering. If the user asks to rearrange
             if not isinstance(block, dict) or block.get("type") != "text":
                 continue
             text = block.get("text", "")
-            match = re.search(
-                r"<untrusted-user-data-[^>]+>\s*(.*?)\s*</untrusted-user-data-[^>]+>",
-                text,
-                re.DOTALL,
-            )
-            if match and extracted_data is None:
-                try:
-                    extracted_data = json.loads(match.group(1))
-                except (json.JSONDecodeError, TypeError):
+            if extracted_data is None:
+                # Try all regex matches — the WARNING preamble contains the tag
+                # names as plain text, so the first match may capture junk like
+                # "and" instead of the real data.  Iterate until we find one
+                # that parses as valid JSON.
+                found = False
+                for match in re.finditer(
+                    r"<untrusted-user-data-[^>]+>\s*(.*?)\s*</untrusted-user-data-[^>]+>",
+                    text,
+                    re.DOTALL,
+                ):
+                    try:
+                        extracted_data = json.loads(match.group(1))
+                        found = True
+                        break
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                if not found:
                     headers.append(text)
             else:
                 headers.append(text)
