@@ -23,7 +23,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 // Visualization normalization
 // ---------------------------------------------------------------------------
 
-const SUPPORTED_CHART_TYPES = new Set(['bar', 'line', 'area', 'pie', 'scatter'])
+const SUPPORTED_CHART_TYPES = new Set(['bar', 'line', 'area', 'pie', 'radar', 'radial'])
 const LABEL_KEYS = new Set(['name', 'label', 'category', 'group', 'month', 'date', 'material'])
 
 /**
@@ -72,16 +72,21 @@ export function normalizeVisualization(raw: unknown): Visualization | null {
       }))
     }
 
+    // Pass through chartConfig from backend if available
+    const chartConfig = data.chartConfig as Record<string, { label: string; color?: string }> | undefined
+
     return {
       type: 'chart',
       data: {
-        chartType: chartType as 'bar' | 'line' | 'area' | 'pie' | 'scatter',
+        chartType: chartType as 'bar' | 'line' | 'area' | 'pie' | 'radar' | 'radial',
         title: (data.title ?? '') as string,
         description: (data.description ?? '') as string,
+        xAxisKey: (data.xAxisKey ?? data.x_axis_key ?? '') as string,
         xAxis: (data.x_label ?? data.xAxis ?? '') as string,
         yAxis: (data.y_label ?? data.yAxis ?? '') as string,
         data: dataPoints as Record<string, string | number>[],
         series: seriesMeta ?? [],
+        chartConfig,
       },
     }
   }

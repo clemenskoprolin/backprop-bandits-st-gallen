@@ -20,9 +20,19 @@ import {
   LineChart,
   Area,
   AreaChart,
+  Pie,
+  PieChart,
+  Radar,
+  RadarChart,
+  RadialBar,
+  RadialBarChart,
+  PolarAngleAxis,
+  PolarGrid,
   XAxis,
   YAxis,
   CartesianGrid,
+  Label,
+  Cell,
 } from 'recharts'
 import { useChatStore } from '@/lib/chat-store'
 import { DashboardWidget, ChartData, TableData, CardsData } from '@/lib/types'
@@ -59,17 +69,52 @@ interface DashboardPanelProps {
 }
 
 function ChartVisualization({ data, fullHeight = false }: { data: ChartData; fullHeight?: boolean }) {
+  // Build chartConfig: prefer backend-provided chartConfig, fall back to series metadata
   const chartConfig: ChartConfig = {}
-  data.series.forEach((s) => {
-    chartConfig[s.key] = {
-      label: s.label,
-      color: s.color || 'var(--chart-1)',
-    }
-  })
+  if (data.chartConfig) {
+    Object.entries(data.chartConfig).forEach(([key, val]) => {
+      chartConfig[key] = {
+        label: val.label,
+        color: val.color || 'var(--chart-1)',
+      }
+    })
+  } else {
+    data.series.forEach((s) => {
+      chartConfig[s.key] = {
+        label: s.label,
+        color: s.color || 'var(--chart-1)',
+      }
+    })
+  }
 
-  const xAxisKey = Object.keys(data.data[0] || {}).find(
-    (k) => !data.series.some((s) => s.key === k)
-  ) || 'name'
+  // For pie/radial charts, add per-item configs from data records with "fill"
+  // so tooltips/legends resolve the correct label and color per slice
+  if (data.chartType === 'pie' || data.chartType === 'radial') {
+    const xKey = data.xAxisKey || 'name'
+    data.data.forEach((d, i) => {
+      const name = String(d[xKey] || `Item ${i + 1}`)
+      const lowerName = name.toLowerCase().replace(/\s+/g, '_')
+      chartConfig[lowerName] = {
+        label: name,
+        color: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+      }
+    })
+  }
+
+  // Determine series keys from chartConfig or series metadata
+  const seriesKeys = data.chartConfig
+    ? Object.keys(data.chartConfig)
+    : data.series.map((s) => s.key)
+
+  // x-axis key: prefer explicit xAxisKey, then xAxis, then auto-detect
+  const xAxisKey = data.xAxisKey
+    || data.xAxis
+    || Object.keys(data.data[0] || {}).find(
+      (k) => !seriesKeys.includes(k)
+    ) || 'name'
+
+  const getColor = (key: string, index: number) =>
+    chartConfig[key]?.color || `var(--chart-${(index % 5) + 1})`
 
   const renderChart = () => {
     switch (data.chartType) {
@@ -89,14 +134,14 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Line
-                key={s.key}
+                key={key}
                 type="monotone"
-                dataKey={s.key}
-                stroke={s.color || `var(--chart-${i + 1})`}
+                dataKey={key}
+                stroke={getColor(key, i)}
                 strokeWidth={2}
-                dot={{ fill: s.color || `var(--chart-${i + 1})`, r: 3 }}
+                dot={{ fill: getColor(key, i), r: 3 }}
               />
             ))}
           </LineChart>
@@ -117,19 +162,110 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Area
-                key={s.key}
+                key={key}
                 type="monotone"
-                dataKey={s.key}
-                fill={s.color || `var(--chart-${i + 1})`}
+                dataKey={key}
+                fill={getColor(key, i)}
                 fillOpacity={0.3}
-                stroke={s.color || `var(--chart-${i + 1})`}
+                stroke={getColor(key, i)}
                 strokeWidth={2}
               />
             ))}
           </AreaChart>
         )
+      case 'pie': {
+        // For pie charts, use first series key as the value key
+        const valueKey = seriesKeys[0] || 'value'
+        const pieData = data.data.map((d, i) => ({
+          ...d,
+          fill: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+        }))
+        return (
+          <PieChart>
+            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+            <Pie
+              data={pieData}
+              dataKey={valueKey}
+              nameKey={xAxisKey}
+              cx="50%"
+              cy="50%"
+              innerRadius="40%"
+              outerRadius="70%"
+              strokeWidth={2}
+            >
+              {pieData.map((entry, i) => (
+                <Cell key={i} fill={entry.fill as string} />
+              ))}
+              <Label
+                content={({ viewBox }) => {
+                  if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                    const total = data.data.reduce((sum, d) => sum + (Number(d[valueKey]) || 0), 0)
+                    return (
+                      <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                        <tspan x={viewBox.cx} y={viewBox.cy} className="fill-foreground text-2xl font-bold">
+                          {total.toLocaleString()}
+                        </tspan>
+                        <tspan x={viewBox.cx} y={(viewBox.cy || 0) + 20} className="fill-muted-foreground text-xs">
+                          Total
+                        </tspan>
+                      </text>
+                    )
+                  }
+                }}
+              />
+            </Pie>
+          </PieChart>
+        )
+      }
+      case 'radar':
+        return (
+          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="70%">
+            <PolarGrid className="stroke-border" />
+            <PolarAngleAxis
+              dataKey={xAxisKey}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+            />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            {seriesKeys.map((key, i) => (
+              <Radar
+                key={key}
+                dataKey={key}
+                fill={getColor(key, i)}
+                fillOpacity={0.3}
+                stroke={getColor(key, i)}
+                strokeWidth={2}
+              />
+            ))}
+          </RadarChart>
+        )
+      case 'radial': {
+        const valueKey = seriesKeys[0] || 'value'
+        const radialData = data.data.map((d, i) => ({
+          ...d,
+          fill: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+        }))
+        return (
+          <RadialBarChart
+            data={radialData}
+            innerRadius="30%"
+            outerRadius="100%"
+            startAngle={180}
+            endAngle={0}
+          >
+            <ChartTooltip content={<ChartTooltipContent nameKey={xAxisKey} />} />
+            <RadialBar
+              dataKey={valueKey}
+              background
+            >
+              {radialData.map((entry, i) => (
+                <Cell key={i} fill={entry.fill as string} />
+              ))}
+            </RadialBar>
+          </RadialBarChart>
+        )
+      }
       case 'bar':
       default:
         return (
@@ -147,11 +283,11 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Bar
-                key={s.key}
-                dataKey={s.key}
-                fill={s.color || `var(--chart-${i + 1})`}
+                key={key}
+                dataKey={key}
+                fill={getColor(key, i)}
                 radius={[4, 4, 0, 0]}
               />
             ))}

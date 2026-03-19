@@ -75,17 +75,24 @@ async def get_aggregated_data_for_chart(
 
 
 @tool
-def render_visualization(chart_type: str, title: str, x_label: str, y_label: str, series_json: str) -> str:
+def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "") -> str:
     """
     Render a chart on the user's dashboard.
     ALWAYS call this when displaying aggregated/statistical data.
 
     Args:
-        chart_type: 'Bar'
+        chart_type: One of 'bar', 'area', 'line', 'pie', 'radar', 'radial'.
         title: Chart title.
-        x_label: X axis label.
-        y_label: Y axis label.
-        series_json: Dataset as JSON string from get_aggregated_data_for_chart or formatted data.
+        x_axis_key: The key in data records used for the x-axis / category labels (e.g. 'date', 'material', 'name').
+        data_json: JSON string of FLAT records array. Each record is an object with the x_axis_key and one or more numeric series keys.
+            Example: '[{"date": "2024-01", "tensile_strength": 420, "yield_strength": 380}, {"date": "2024-02", "tensile_strength": 435, "yield_strength": 390}]'
+            For pie charts: '[{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]'
+        chart_config_json: JSON string defining series metadata. Keys are the series data keys, values have 'label' and 'color'.
+            Color can be a CSS color name (e.g. "red", "blue"), hex (e.g. "#ff0000"), or theme token (e.g. "var(--chart-1)").
+            If the user mentions specific colors, use those exact CSS color names.
+            Example: '{"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}'
+            For pie charts with user-specified colors: '{"value": {"label": "Count"}}' and set "fill" in data_json: '[{"name": "Red", "value": 50, "fill": "red"}, {"name": "Blue", "value": 50, "fill": "blue"}]'
+        description: Optional short description shown below the title.
     """
     return "Visualization successfully rendered on UI."
 
@@ -179,9 +186,10 @@ def run_python_analysis(code: str, data_json: str) -> str:
 
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [get_aggregated_data_for_chart, run_python_analysis] 
+custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
 tool_node = ToolNode(custom_tools)
 visualization_tool = ToolNode([render_visualization])
+submit_tool = ToolNode([submit_answer])
 
 # llm = ChatAnthropic(model="claude-sonnet-4-6")
 llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
@@ -424,9 +432,10 @@ class Agent:
 
         Visualization:
         - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-        - `render_visualization` - Display charts on the UI
+        - `render_visualization` - Display charts on the UI (supports: bar, area, line, pie, radar, radial)
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
+        Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
         """ + similar_data
 
         output_system_prompt = """You are a material testing AI assistant.
@@ -460,16 +469,22 @@ class Agent:
 
         visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. Visualize if possible! 
+        use the render_visualization function to visualize the data. Visualize if possible!
         Render a chart on the user's dashboard.
         ALWAYS call this when displaying aggregated/statistical data.
 
-        Args:
-            chart_type: 'Bar'
-            title: Chart title.
-            x_label: X axis label.
-            y_label: Y axis label.
-            series_json: Dataset as JSON string from get_aggregated_data_for_chart or formatted data.
+        Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial'.
+
+        IMPORTANT: data_json must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
+        Example for bar/line/area: [{"material": "Steel A", "tensile_strength": 420, "yield_strength": 380}, ...]
+        Example for pie: [{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]
+
+        chart_config_json maps each numeric key to its display label and color:
+        {"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}
+
+        Use var(--chart-1) through var(--chart-5) for default colors.
+        If the user mentions specific colors (e.g. "red and blue"), use those CSS color names directly.
+        For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
         If not, still call the function with none values.""" + similar_data
 
 
@@ -481,12 +496,14 @@ class Agent:
         graph_builder.add_node("visualizer", visualizer)
         graph_builder.add_node("visual_tool", visualization_tool)
         graph_builder.add_node("output", output_node)
+        graph_builder.add_node("submit_tool", submit_tool)
         graph_builder.add_edge(START, "visualizer")
         # graph_builder.add_conditional_edges("agent", should_continue)
         # graph_builder.add_edge("tools", "visualizer")
-        graph_builder.add_edge("visualizer", "visual_tool")
+        graph_builder.add_conditional_edges("visualizer", has_visual)
         graph_builder.add_edge("visual_tool", "output")
-        graph_builder.add_edge("output", END)
+        graph_builder.add_edge("output", "submit_tool")
+        graph_builder.add_edge("submit_tool", END)
         return graph_builder.compile(checkpointer=memory)
 
     def create(self):
