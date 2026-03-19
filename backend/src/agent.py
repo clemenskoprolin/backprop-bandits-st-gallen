@@ -12,11 +12,11 @@ from src import db
 
 load_dotenv()
 
-# MCP Server Configuration - HTTP transport (Docker)
+# MCP Server Configuration - Streamable HTTP transport (Docker)
 MCP_SERVERS = {
     "mongodb": {
         "url": db.settings.mcp_server_url,
-        "transport": "http"
+        "transport": "streamable_http"
     }
 }
 
@@ -85,10 +85,9 @@ async def init_mcp_client():
     global mcp_client, mcp_tools, _all_tools, tool_node, llm_with_tools, agent
 
     mcp_client = MultiServerMCPClient(MCP_SERVERS)
-    await mcp_client.__aenter__()
 
-    # Get all tools from MCP servers (auto-discovered)
-    mcp_tools = mcp_client.get_tools()
+    # New API: get_tools() is async and handles connection internally
+    mcp_tools = await mcp_client.get_tools()
     print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
     for t in mcp_tools:
         print(f"  - {t.name}: {t.description[:60]}...")
@@ -108,9 +107,8 @@ async def init_mcp_client():
 async def shutdown_mcp_client():
     """Shutdown the MCP client."""
     global mcp_client
-    if mcp_client:
-        await mcp_client.__aexit__(None, None, None)
-        mcp_client = None
+    # New API doesn't require explicit cleanup
+    mcp_client = None
 
 
 
