@@ -101,62 +101,72 @@ async def chat_stream(req: ChatRequest):
     async def event_generator():
         # 1. Identify session
         yield _sse_event("session", {"session_id": session.session_id, "message_id": message_id})
+        try:
+            from src.agent import agent
+            from langchain_core.messages import HumanMessage
+            config = {"configurable": {"thread_id": session.session_id}}
+            
+            full_text = ""
+            visualization = None
+            
+            async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
+                kind = event["event"]
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    content = chunk.content
+                    if isinstance(content, list):
+                        text = "".join(block.get("text", "") for block in content if block.get("type") == "text")
+                    else:
+                        text = content
+                    
+                    if text:
+                        full_text += text
+                        yield _sse_event("text", {"chunk": text})
+                elif kind == "on_tool_start":
+                    tool_name = event["name"]
+                    if tool_name != "render_visualization":
+                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
+                    else:
+                        yield _sse_event("thinking", {"step": "Rendering visualization..."})
+                elif kind == "on_tool_end":
+                    if event["name"] == "render_visualization":
+                        try:
+                            import json
+                            kwargs = event['data'].get("input", {})
+                            series_data = kwargs.get("series_json", "[]")
+                            if isinstance(series_data, str):
+                                series_data = json.loads(series_data)
+                                
+                            vis = VisualizationBlock(
+                                type="chart",
+                                data={
+                                    "chart_type": kwargs.get("chart_type", "bar"),
+                                    "title": kwargs.get("title", ""),
+                                    "x_label": kwargs.get("x_label", ""),
+                                    "y_label": kwargs.get("y_label", ""),
+                                    "series": series_data,
+                                },
+                            )
+                            visualization = vis
+                            yield _sse_event("visualization", vis.model_dump())
+                        except Exception as e:
+                            print("Visualization rendering error:", e)
 
-        from src.agent import agent
-        from langchain_core.messages import HumanMessage
-        config = {"configurable": {"thread_id": session.session_id}}
-        
-        full_text = ""
-        visualization = None
-        
-        async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
-            kind = event["event"]
-            if kind == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                if chunk.content:
-                    full_text += chunk.content
-                    yield _sse_event("text", {"chunk": chunk.content})
-            elif kind == "on_tool_start":
-                tool_name = event["name"]
-                if tool_name != "render_visualization":
-                    yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
-                else:
-                    yield _sse_event("thinking", {"step": "Rendering visualization..."})
-            elif kind == "on_tool_end":
-                if event["name"] == "render_visualization":
-                    try:
-                        import json
-                        kwargs = event['data'].get("input", {})
-                        series_data = kwargs.get("series_json", "[]")
-                        if isinstance(series_data, str):
-                            series_data = json.loads(series_data)
-                            
-                        vis = VisualizationBlock(
-                            type="chart",
-                            data={
-                                "chart_type": kwargs.get("chart_type", "bar"),
-                                "title": kwargs.get("title", ""),
-                                "x_label": kwargs.get("x_label", ""),
-                                "y_label": kwargs.get("y_label", ""),
-                                "series": series_data,
-                            },
-                        )
-                        visualization = vis
-                        yield _sse_event("visualization", vis.model_dump())
-                    except Exception as e:
-                        print("Visualization rendering error:", e)
-
-        # 7. Persist assistant message
-        session.messages.append(
-            Message(
-                message_id=message_id,
-                role="assistant",
-                content=full_text,
-                visualization=visualization,
-                query_used=None,
+            # 7. Persist assistant message
+            session.messages.append(
+                Message(
+                    message_id=message_id,
+                    role="assistant",
+                    content=full_text,
+                    visualization=visualization,
+                    query_used=None,
+                )
             )
-        )
-
+        except Exception as e:
+            import traceback
+            print("ERROR in event_generator:", e)
+            traceback.print_exc()
+            yield _sse_event("error", {"message": str(e)})
         yield _sse_event("done", {})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -184,10 +194,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
     
     # Process output
     messages = response['messages']
-    # ai_msg = messages[-1]
-    # text = ai_msg.content
-    ai_msg = messages
-    text = ai_msg
+    print(messages)
+    ai_msg = messages[-1]
+    text = ai_msg.content
+    # ai_msg = messages
+    # text = ai_msg
     visualization = None
     thinking = []
     
@@ -196,7 +207,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         if getattr(msg, "name", None) == "render_visualization":
             # Extract visualization kwargs from the previous AIMessage's tool_call
             for prior_msg in reversed(messages):
-                if prior_msg.tool_calls:
+                if prior_msg.type == "ai" and prior_msg.tool_calls:
                     for tc in prior_msg.tool_calls:
                         if tc['name'] == 'render_visualization':
                             # Build the visualization block
