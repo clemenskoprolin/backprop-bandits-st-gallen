@@ -15,7 +15,7 @@ load_dotenv()
 # MCP Server Configuration - Streamable HTTP transport (Docker)
 MCP_SERVERS = {
     "mongodb": {
-        "url": "mongodb://202.61.251.60:3001/tpx_clean",
+        "url": "http://202.61.251.60:3001/mcp",
         "transport": "streamable_http"
     }
 }
@@ -216,6 +216,8 @@ class Agent:
         
         global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
         
+        be_professional = "  Be very professional!"
+
         system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
         AVAILABLE TOOLS:
 
@@ -231,14 +233,14 @@ class Agent:
         - `render_visualization` - Display charts on the UI
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
-        """ + similar_data
+        """ + similar_data + be_professional
 
         output_system_prompt = """You are a material testing AI assistant.
 
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
         2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
-        """ + similar_data
+        """ + similar_data + be_professional
 
         intermediate_output_system_prompt = """briefly summarize the findings
         """ + similar_data
@@ -260,11 +262,11 @@ class Agent:
         - accept: answer is well supported by data
         - retry: answer needs more data, specify which tool to call
         - escalate: query is too complex, needs deeper analysis
-        """ + similar_data
+        """ + similar_data + be_professional
 
         visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. If not, still call the function with none values.""" + similar_data
+        use the render_visualization function to visualize the data. If not, still call the function with none values.""" + similar_data + be_professional
 
 
     def build_agent(self):
