@@ -444,7 +444,7 @@ submit_tool = ToolNode([submit_answer])
 
 #llm = ChatAnthropic(model="claude-sonnet-4-6")
 # llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
-llm = ChatOpenAI(model="gpt-5.4-pro")
+llm = ChatOpenAI(model="gpt-5.4")
 llm_with_tools = llm.bind_tools(custom_tools)
 llm_visualizer = llm.bind_tools(dashboard_tools)
 llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
