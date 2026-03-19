@@ -1,0 +1,51 @@
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=http://api:3003
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    ports:
+      - "3003:3003"
+    env_file: ./backend/.env
+    environment:
+      - MCP_URL=http://mcp:3001/mcp
+      - RAG_URL=http://rag:3002
+      - UPLOAD_DIR=/shared/uploads
+    volumes:
+      - uploads:/shared/uploads
+    depends_on:
+      - mcp
+      - rag
+    restart: unless-stopped
+
+  rag:
+    build: ./rag
+    ports:
+      - "3002:3002"
+    env_file: ./rag/.env
+    environment:
+      - CHROMA_PATH=/data/vector_store
+    volumes:
+      - vector_store:/data/vector_store
+      - uploads:/shared/uploads
+    restart: unless-stopped
+
+  mcp:
+    image: mongodb/mongodb-mcp-server:latest
+    ports:
+      - "3001:3001"
+    environment:
+      - MDB_MCP_CONNECTION_STRING=mongodb://admin:olmamessen1st@202.61.251.60:27017/txp_clean?authSource=admin
+    command: ["--transport", "http", "--httpHost", "0.0.0.0", "--httpPort", "3001"]
+    restart: unless-stopped
+
+volumes:
+  vector_store:
+  uploads:

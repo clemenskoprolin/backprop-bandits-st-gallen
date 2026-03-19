@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import requests
 from uuid import uuid4
 
@@ -97,7 +98,8 @@ def get_similarity_by_query(message: str, session_id):
     try:
         print("Querying")
         print(message, session_id)
-        response = requests.post("http://localhost:3002/generate_context", json={
+        rag_url = os.getenv("RAG_URL", "http://localhost:3002")
+        response = requests.post(f"{rag_url}/generate_context", json={
             "query": message,
             "session_id": session_id
         })

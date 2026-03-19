@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from src import db
 from langchain_core.messages import trim_messages
 
+import os
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -125,7 +127,7 @@ Top-level fields:
 
 MCP_SERVERS = {
     "mongodb": {
-        "url": "http://202.61.251.60:3001/mcp",
+        "url": os.getenv("MCP_URL", "http://202.61.251.60:3001/mcp"),
         "transport": "streamable_http",
     }
 }

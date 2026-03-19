@@ -9,6 +9,8 @@ import os
 import tempfile
 import requests
 
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", tempfile.gettempdir())
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -26,7 +28,7 @@ async def upload_pdf(
 
     contents = await file.read()
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=UPLOAD_DIR) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
         print("Saved temporary:", tmp.name, tmp_path)
