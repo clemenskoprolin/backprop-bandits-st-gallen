@@ -50,6 +50,7 @@ export function ChatContainer() {
     showDashboard,
     dashboardWidgets,
     sendUserMessage,
+    abortStream,
     setShowChat,
     setShowDashboard,
     createNewSession,
@@ -407,6 +408,7 @@ export function ChatContainer() {
             <ChatInput
               onSend={handleSend}
               isSending={isSending}
+              onAbort={abortStream}
               uploadedFiles={uploadedFiles}
               onPickFile={handleUploadFile}
               onRemoveFile={(name) => setUploadedFiles((prev) => prev.filter((f) => f.name !== name))}

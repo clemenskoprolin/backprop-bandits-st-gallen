@@ -22,6 +22,7 @@ interface ChatStore {
   isLoading: boolean
   isSending: boolean
   isStreaming: boolean
+  abortController: AbortController | null
   showChat: boolean
   showDashboard: boolean
   dashboardWidgets: DashboardWidget[]
@@ -42,6 +43,7 @@ interface ChatStore {
   deleteCurrentSession: () => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   sendUserMessage: (content: string, attachments?: { name: string }[]) => Promise<void>
+  abortStream: () => void
   setShowChat: (show: boolean) => void
   setShowDashboard: (show: boolean) => void
   clearCurrentSession: () => void
@@ -243,6 +245,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   isLoading: false,
   isSending: false,
   isStreaming: false,
+  abortController: null,
   showChat: true,
   showDashboard: true,
   dashboardWidgets: [],
@@ -376,7 +379,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       attachments: attachments?.length ? attachments : undefined,
     }
 
-    set({ messages: [...messages, userMessage], isSending: true, isStreaming: true })
+    const abortController = new AbortController()
+    set({ messages: [...messages, userMessage], isSending: true, isStreaming: true, abortController })
 
     // Accumulate streaming state
     let messageId = `msg_${Date.now()}`
@@ -535,13 +539,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }))
           }
         },
-      }, dashboardCtx)
+      }, dashboardCtx, abortController.signal)
     } catch (err) {
-      console.error('Stream error:', err)
-      fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
-      updateAssistantMessage()
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // User aborted — no error message needed
+      } else {
+        console.error('Stream error:', err)
+        fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
+        updateAssistantMessage()
+      }
     } finally {
-      set({ isSending: false, isStreaming: false, selectedWidgetIds: [] })
+      set({ isSending: false, isStreaming: false, abortController: null, selectedWidgetIds: [] })
+    }
+  },
+
+  abortStream: () => {
+    const { abortController } = get()
+    if (abortController) {
+      abortController.abort()
+      set({ isSending: false, isStreaming: false, abortController: null })
     }
   },
 

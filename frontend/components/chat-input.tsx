@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { SendIcon, Loader2Icon, PaperclipIcon, FileTextIcon, XIcon } from 'lucide-react'
+import { SendIcon, SquareIcon, PaperclipIcon, FileTextIcon, XIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -15,6 +15,7 @@ export interface UploadedFile {
 interface ChatInputProps {
   onSend: (message: string) => void
   isSending: boolean
+  onAbort?: () => void
   uploadedFiles: UploadedFile[]
   onPickFile: (file: File) => void
   onRemoveFile: (name: string) => void
@@ -24,6 +25,7 @@ interface ChatInputProps {
 export function ChatInput({
   onSend,
   isSending,
+  onAbort,
   uploadedFiles,
   onPickFile,
   onRemoveFile,
@@ -145,17 +147,26 @@ export function ChatInput({
             >
               <PaperclipIcon className="h-4 w-4" />
             </Button>
-            <Button
-              size="icon"
-              disabled={!input.trim() || isSending}
-              onClick={handleSubmit}
-              className="h-8 w-8 rounded-xl"
-            >
-              {isSending
-                ? <Loader2Icon className="h-4 w-4 animate-spin" />
-                : <SendIcon className="h-4 w-4" />
-              }
-            </Button>
+            {isSending && onAbort ? (
+              <Button
+                size="icon"
+                onClick={onAbort}
+                className="h-8 w-8 rounded-xl relative"
+                title="Stop generating"
+              >
+                <span className="absolute inset-0 rounded-xl border-2 border-transparent border-t-current animate-spin" />
+                <SquareIcon className="h-3 w-3 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                disabled={!input.trim() || isSending}
+                onClick={handleSubmit}
+                className="h-8 w-8 rounded-xl"
+              >
+                <SendIcon className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </div>
 

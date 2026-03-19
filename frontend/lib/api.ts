@@ -322,7 +322,8 @@ export async function sendMessageStream(
   sessionId: string | null,
   message: string,
   callbacks: StreamCallbacks,
-  dashboardWidgets?: DashboardWidgetContext[]
+  dashboardWidgets?: DashboardWidgetContext[],
+  signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
@@ -332,6 +333,7 @@ export async function sendMessageStream(
       session_id: sessionId,
       dashboard_widgets: dashboardWidgets ?? [],
     }),
+    signal,
   })
 
   if (!res.ok) {
