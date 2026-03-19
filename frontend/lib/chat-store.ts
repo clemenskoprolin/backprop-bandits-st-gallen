@@ -25,6 +25,8 @@ interface ChatStore {
   showChat: boolean
   showDashboard: boolean
   dashboardWidgets: DashboardWidget[]
+  /** Widget to swap out once the LLM delivers a visualization to replace it. */
+  pendingReplacement: { widgetId: string; x: number; y: number; w: number } | null
   /** Per-session widget cache so positions/sizes survive session switches */
   _sessionWidgetCache: Record<string, DashboardWidget[]>
 
@@ -41,6 +43,7 @@ interface ChatStore {
   clearCurrentSession: () => void
 
   // Dashboard widget actions
+  setPendingReplacement: (replacement: { widgetId: string; x: number; y: number; w: number } | null) => void
   addWidget: (widget: DashboardWidget) => void
   removeWidget: (widgetId: string) => void
   updateWidget: (widgetId: string, update: Partial<DashboardWidget>) => void
@@ -94,6 +97,7 @@ function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
 
 /**
  * Rebuild widgets from messages but apply saved backend layouts where available.
+ * Also restores manual widgets (text headlines, etc.) from saved layout data.
  */
 function buildWidgetsFromMessagesWithLayouts(
   messages: Message[],
@@ -103,14 +107,30 @@ function buildWidgetsFromMessagesWithLayouts(
   if (savedLayouts.length === 0) return widgets
 
   const layoutMap = new Map(savedLayouts.map((l) => [l.id, l]))
-  return widgets.map((w) => {
+  const existingIds = new Set(widgets.map((w) => w.id))
+
+  // Apply saved positions to message-derived widgets
+  const updated = widgets.map((w) => {
     const saved = layoutMap.get(w.id)
     if (!saved) return w
-    return {
-      ...w,
-      layout: { x: saved.x, y: saved.y, w: saved.w, h: w.layout.h },
-    }
+    return { ...w, layout: { x: saved.x, y: saved.y, w: saved.w, h: w.layout.h } }
   })
+
+  // Restore manual widgets (text, etc.) that are not in messages
+  for (const saved of savedLayouts) {
+    if (existingIds.has(saved.id) || !saved.visualization_data) continue
+    const vis = saved.visualization_data as Visualization
+    updated.push({
+      id: saved.id,
+      messageId: saved.message_id,
+      visualization: vis,
+      size: 'medium',
+      layout: { x: saved.x, y: saved.y, w: saved.w, h: 1 },
+      isNew: false,
+    })
+  }
+
+  return updated
 }
 
 /** Persist current widget layouts to the backend (fire-and-forget). */
@@ -122,6 +142,8 @@ function persistWidgetLayouts(sessionId: string, widgets: DashboardWidget[]) {
     y: w.layout.y,
     w: w.layout.w,
     h: w.layout.h,
+    // Persist full visualization for manual widgets (text headlines, etc.) so they survive reloads
+    ...(w.messageId.startsWith('manual_') ? { visualizationData: w.visualization } : {}),
   }))
   saveWidgetLayouts(sessionId, layouts).catch(() => {})
 }
@@ -156,6 +178,7 @@ function addVisualizationWidget(
   visualization: Visualization,
   messageId: string,
   queryUsed?: string | null,
+  overridePosition?: { x: number; y: number; w: number } | null,
 ) {
   const getDefaultSize = (type: string): WidgetSize => {
     if (type === 'cards') return 'medium'
@@ -163,21 +186,27 @@ function addVisualizationWidget(
     return 'large'
   }
 
-  let maxY = 0
-  state.dashboardWidgets.forEach((w) => {
-    const bottomY = w.layout.y + w.layout.h
-    if (bottomY > maxY) maxY = bottomY
-  })
-
   const size = getDefaultSize(visualization.type)
   const sizeConfig = WIDGET_SIZE_CONFIG[size]
+
+  let layout: DashboardWidget['layout']
+  if (overridePosition) {
+    layout = { x: overridePosition.x, y: overridePosition.y, w: overridePosition.w, h: sizeConfig.h }
+  } else {
+    let maxY = 0
+    state.dashboardWidgets.forEach((w) => {
+      const bottomY = w.layout.y + w.layout.h
+      if (bottomY > maxY) maxY = bottomY
+    })
+    layout = { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h }
+  }
 
   return {
     id: `widget_${messageId}`,
     messageId,
     visualization,
     size,
-    layout: { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h },
+    layout,
     queryUsed,
     isNew: true,
   } satisfies DashboardWidget
@@ -194,6 +223,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   showChat: true,
   showDashboard: true,
   dashboardWidgets: [],
+  pendingReplacement: null,
   _sessionWidgetCache: {},
 
   loadSessions: async () => {
@@ -399,9 +429,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           if (vis.type !== 'none') {
             vizCounter++
             const widgetMessageId = vizCounter === 1 ? placeholderId : `${placeholderId}_viz${vizCounter}`
-            const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed)
+            // On first viz, consume the pending replacement: remove the placeholder and land here
+            const pending = vizCounter === 1 ? get().pendingReplacement : null
+            const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed, pending)
             set((state) => ({
-              dashboardWidgets: [...state.dashboardWidgets, widget],
+              dashboardWidgets: [
+                ...state.dashboardWidgets.filter((w) => w.id !== pending?.widgetId),
+                widget,
+              ],
+              pendingReplacement: null,
             }))
           }
         },
@@ -476,6 +512,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setShowDashboard: (show: boolean) => set({ showDashboard: show }),
 
   clearCurrentSession: () => set({ currentSession: null, messages: [], dashboardWidgets: [] }),
+
+  setPendingReplacement: (replacement) => set({ pendingReplacement: replacement }),
 
   addWidget: (widget: DashboardWidget) =>
     set((state) => ({ dashboardWidgets: [...state.dashboardWidgets, widget] })),

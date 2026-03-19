@@ -615,7 +615,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         graph_builder.add_node("submit_tool", submit_tool)
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "agent")
+        graph_builder.add_edge("tools", "visualizer")
         graph_builder.add_conditional_edges("visualizer", has_visual)
         graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", "submit_tool")

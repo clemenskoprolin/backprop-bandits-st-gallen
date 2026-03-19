@@ -545,9 +545,23 @@ function CardsVisualization({ data }: { data: CardsData }) {
 
 function EmptyDiagramVisualization({
   onClick,
+  isWorking = false,
 }: {
   onClick: () => void
+  isWorking?: boolean
 }) {
+  if (isWorking) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center gap-3 px-4">
+        <div className="rounded-full bg-muted p-3 animate-pulse">
+          <BarChart2Icon className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <p className="text-xs text-muted-foreground text-center leading-snug animate-pulse">
+          Working…
+        </p>
+      </div>
+    )
+  }
   return (
     <button
       className="h-full w-full flex flex-col items-center justify-center gap-3 px-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-md"
@@ -625,6 +639,7 @@ function DashboardWidgetCard({
   onDragHandleDown,
   onUpdateVisualizationData,
   onOpenEmptyDiagramDialog,
+  isWorking = false,
 }: {
   widget: DashboardWidget
   isNew?: boolean
@@ -634,6 +649,7 @@ function DashboardWidgetCard({
   onDragHandleDown?: (e: React.PointerEvent) => void
   onUpdateVisualizationData?: (data: Visualization['data']) => void
   onOpenEmptyDiagramDialog?: () => void
+  isWorking?: boolean
 }) {
   const isText = widget.visualization.type === 'text'
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
@@ -684,6 +700,7 @@ function DashboardWidgetCard({
         return (
           <EmptyDiagramVisualization
             onClick={() => onOpenEmptyDiagramDialog?.()}
+            isWorking={isWorking}
           />
         )
       default:
@@ -973,7 +990,7 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
 type FabDragType = 'text' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
-  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage } = useChatStore()
+  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
@@ -1323,12 +1340,23 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     setFabOpen(false)
   }, [])
 
-  // ── Empty diagram: generate via LLM ──
+  // ── Empty diagram: generate via LLM — keep placeholder visible until data arrives ──
   const handleGenerateDiagram = useCallback((widgetId: string, prompt: string) => {
-    removeWidget(widgetId)
+    const widget = dashboardWidgets.find((w) => w.id === widgetId)
+    if (widget) {
+      const placement = layoutMap.get(widgetId)
+      // Register the placeholder so onVisualization can atomically swap it out
+      setPendingReplacement({
+        widgetId,
+        x: placement?.x ?? widget.layout.x,
+        y: placement?.y ?? widget.layout.y,
+        w: placement?.w ?? widget.layout.w,
+      })
+    }
+    // Do NOT remove the widget here — it stays until the visualization arrives
     sendUserMessage(prompt)
     setEmptyDiagramDialogId(null)
-  }, [removeWidget, sendUserMessage])
+  }, [sendUserMessage, setPendingReplacement, dashboardWidgets, layoutMap])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
     const data = widget.visualization.data
@@ -1456,6 +1484,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                           ? () => setEmptyDiagramDialogId(widget.id)
                           : undefined
                       }
+                      isWorking={pendingReplacement?.widgetId === widget.id}
                     />
                     {/* Resize handle — right edge */}
                     {cols >= 2 && (
