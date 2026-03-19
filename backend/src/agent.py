@@ -13,16 +13,16 @@ from src import db
 load_dotenv()
 
 # MCP Server Configuration - Streamable HTTP transport (Docker)
-# MCP_SERVERS = {
-#     "mongodb": {
-#         "url": db.settings.mcp_server_url,
-#         "transport": "streamable_http"
-#     }
-# }
+MCP_SERVERS = {
+    "mongodb": {
+        "url": "mongodb://202.61.251.60:3001/tpx_clean",
+        "transport": "streamable_http"
+    }
+}
 
-# # Global MCP client (initialized via lifespan)
-# mcp_client: MultiServerMCPClient = None
-# mcp_tools: list = []
+# Global MCP client (initialized via lifespan)
+mcp_client: MultiServerMCPClient = None
+mcp_tools: list = []
 
 @tool 
 async def get_sample_documents() -> str:
@@ -89,27 +89,30 @@ _all_tools = custom_tools.copy()
 
 
 async def init_mcp_client():
-    """Initialize the MCP client and load MongoDB tools."""
-    global mcp_client, mcp_tools, _all_tools, tool_node, llm_with_tools, agent
+    try:
+        """Initialize the MCP client and load MongoDB tools."""
+        global mcp_client, mcp_tools, _all_tools, tool_node, llm_with_tools, agent
 
-    mcp_client = MultiServerMCPClient(MCP_SERVERS)
+        mcp_client = MultiServerMCPClient(MCP_SERVERS)
 
-    # New API: get_tools() is async and handles connection internally
-    mcp_tools = await mcp_client.get_tools()
-    print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
-    for t in mcp_tools:
-        print(f"  - {t.name}: {t.description[:60]}...")
+        # New API: get_tools() is async and handles connection internally
+        mcp_tools = await mcp_client.get_tools()
+        print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
+        for t in mcp_tools:
+            print(f"  - {t.name}: {t.description[:60]}...")
 
-    # Combine custom tools with MCP tools
-    _all_tools = custom_tools + mcp_tools
-    tool_node = ToolNode(_all_tools)
-    llm_with_tools = llm.bind_tools(_all_tools)
+        # Combine custom tools with MCP tools
+        _all_tools = custom_tools + mcp_tools
+        tool_node = ToolNode(_all_tools)
+        llm_with_tools = llm.bind_tools(_all_tools)
 
-    # Rebuild the agent with new tools
-    # agent = build_agent()
-    print("Agent rebuilt with MCP tools")
+        # Rebuild the agent with new tools
+        # agent = build_agent()
+        print("Agent rebuilt with MCP tools")
 
-    return mcp_tools
+        return mcp_tools
+    except Exception as e:
+        raise Exception("Exception occured:", e)
 
 
 async def shutdown_mcp_client():
@@ -274,9 +277,9 @@ class Agent:
         graph_builder.add_node("output", output_node)
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "output")
-        # graph_builder.add_edge("visualizer", "visual_tool")
-        # graph_builder.add_edge("visual_tool", "output")
+        graph_builder.add_edge("tools", "visualizer")
+        graph_builder.add_edge("visualizer", "visual_tool")
+        graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", END)
         return graph_builder.compile(checkpointer=memory)
     

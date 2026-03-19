@@ -10,9 +10,9 @@ services:
     image: mongodb/mongodb-mcp-server:latest
     container_name: mongodb-mcp-server
     ports:
-      - "3000:3000"
+      - "3001:3001"
     environment:
       # MongoDB connection string - use host.docker.internal for WSL2/Docker Desktop
       - MDB_MCP_CONNECTION_STRING=mongodb://host.docker.internal:27017/txp_clean
-    command: ["--transport", "http", "--httpHost", "0.0.0.0", "--httpPort", "3000"]
+    command: ["--transport", "http", "--httpHost", "0.0.0.0", "--httpPort", "3001"]
     restart: unless-stopped
