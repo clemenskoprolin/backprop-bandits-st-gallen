@@ -53,10 +53,20 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WidgetLayout(BaseModel):
+    """Persisted layout for a dashboard widget."""
+    id: str
+    message_id: str
+    x: int = 0
+    y: int = 0
+    w: int = 1
+
+
 class Session(BaseModel):
     session_id: str
     title: str | None = None  # derived from first user message
     messages: list[Message] = Field(default_factory=list)
+    widget_layouts: list[WidgetLayout] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -29,11 +29,16 @@ from models import (
     SessionListResponse,
     SessionSummary,
     VisualizationBlock,
+    WidgetLayout,
 )
 
 
 class RenameSessionRequest(BaseModel):
     title: str
+
+
+class SaveWidgetLayoutsRequest(BaseModel):
+    layouts: list[WidgetLayout]
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -307,6 +312,16 @@ async def rename_session(session_id: str, req: RenameSessionRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     session.title = req.title
     return {"status": "updated", "session_id": session_id, "title": req.title}
+
+
+@router.put("/sessions/{session_id}/widgets")
+async def save_widget_layouts(session_id: str, req: SaveWidgetLayoutsRequest):
+    """Save dashboard widget layouts for a session."""
+    session = _sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.widget_layouts = req.layouts
+    return {"status": "saved", "session_id": session_id, "count": len(req.layouts)}
 
 
 @router.delete("/sessions/{session_id}")

@@ -286,6 +286,11 @@ export async function renameSession(id: string, title: string): Promise<void> {
   console.log('Renamed session:', id, 'to', title)
 }
 
+export async function saveWidgetLayouts(sessionId: string, layouts: { id: string; messageId: string; x: number; y: number; w: number; h: number }[]): Promise<void> {
+  await delay(100)
+  console.log('Saved widget layouts for session:', sessionId, layouts)
+}
+
 export async function fetchTemplates(): Promise<Template[]> {
   await delay(200)
   return mockTemplates
