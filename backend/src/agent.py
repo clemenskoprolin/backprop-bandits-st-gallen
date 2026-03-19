@@ -506,7 +506,7 @@ async def init_mcp_client():
         mcp_tools = await mcp_client.get_tools()
         allowed_set = set(["aggregate","collection-indexes", "collection-schema","collection-storage-size","count","db-stats","explain","find","list-collections","list-databases","mongodb-logs","list-knowledge-sources","search-knowledge"])
         mcp_tools = await mcp_client.get_tools()
-        mcp_tools = filter(mcp_tools, lambda x: x.name in allowed_set)
+        mcp_tools = list(filter(lambda x: x.name in allowed_set, mcp_tools))
         print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
         for t in mcp_tools:
             print(f"  - {t.name}: {t.description[:60]}...")
