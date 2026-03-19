@@ -86,6 +86,83 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
     """
     return "Answer submitted."
 
+@tool
+def run_python_analysis(code: str, data_json: str) -> str:
+    """
+    Execute a Python code snippet for statistical analysis on material testing data.
+
+    Use this for: statistical significance tests, trend/degradation analysis,
+    outlier detection, correlation analysis, descriptive statistics.
+
+    The execution environment pre-populates:
+      - `data`: list of dicts parsed from data_json
+      - `df`: pandas DataFrame built from data
+      - `np`: numpy
+      - `pd`: pandas
+      - `stats`: scipy.stats
+
+    Assign your final answer to `result`.
+
+    Args:
+        code: Python snippet. Must assign `result` to capture output.
+        data_json: JSON string (list of dicts) from a `find` or `aggregate` call.
+
+    Returns:
+        JSON string with keys "output" (stdout) and "result" (value of `result`).
+    """
+    import numpy as np
+    import pandas as pd
+    from scipy import stats
+    from langchain_experimental.utilities import PythonREPL
+
+    TIMEOUT_SECONDS = 10
+
+    try:
+        data = json.loads(data_json) if data_json else []
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Failed to parse data_json: {e}", "output": "", "result": None})
+
+    repl = PythonREPL()
+    repl.globals.update({
+        "np": np,
+        "pd": pd,
+        "stats": stats,
+        "data": data,
+        "df": pd.DataFrame(data) if data else pd.DataFrame(),
+        "result": None,
+    })
+
+    def _execute():
+        return repl.run(code)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_execute)
+            output = future.result(timeout=TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        return json.dumps({
+            "error": f"Execution timed out after {TIMEOUT_SECONDS} seconds.",
+            "output": "",
+            "result": None,
+        })
+    except Exception as e:
+        return json.dumps({
+            "error": f"Execution error: {type(e).__name__}: {e}",
+            "output": "",
+            "result": None,
+        })
+
+    raw_result = repl.globals.get("result") or repl.locals.get("result")
+    try:
+        serialized_result = json.loads(json.dumps(raw_result, default=str))
+    except Exception:
+        serialized_result = str(raw_result)
+
+    return json.dumps({
+        "output": output,
+        "result": serialized_result,
+    })
+
 # Custom tools (Recharts-specific, kept alongside MCP tools)
 custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
 tool_node = ToolNode(custom_tools)
@@ -186,7 +263,7 @@ Based on the tool results and analysis above:
 intermediate_output_system_prompt = """briefly summarize the findings
 """
 
-self_critic_system_prompt = critic_system_prompt = """You are a critical reviewer of material testing analysis.
+self_critic_system_prompt = """You are a critical reviewer of material testing analysis.
 
 Review the previous conversation history and output ONLY a JSON object:
 {
