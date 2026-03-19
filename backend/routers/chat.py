@@ -112,6 +112,7 @@ async def chat_stream(req: ChatRequest):
             visualizations = []
             followups = []
             thinking = []
+            query_used = None
             
             async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
                 kind = event["event"]
@@ -139,6 +140,17 @@ async def chat_stream(req: ChatRequest):
                         yield _sse_event("thinking", {"step": "Reordering dashboard..."})
                     elif tool_name == "submit_answer":
                         pass  # don't show this as a thinking step
+                    elif tool_name in ("find", "aggregate", "count"):
+                        tool_input = event["data"].get("input", {})
+                        collection = tool_input.get("collection", "?")
+                        query_str = json.dumps(tool_input, indent=2, default=str)
+                        formatted = f"db.{collection}.{tool_name}({query_str})"
+                        if query_used:
+                            query_used += "\n\n" + formatted
+                        else:
+                            query_used = formatted
+                        thinking.append(f"Executing: {formatted}")
+                        yield _sse_event("thinking", {"step": f"Executing: {formatted}"})
                     else:
                         thinking.append(f"Used tool: {tool_name}")
                         yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
@@ -200,6 +212,9 @@ async def chat_stream(req: ChatRequest):
                         except Exception as e:
                             print("submit_answer parsing error:", e)
 
+            if query_used:
+                yield _sse_event("query", {"query_used": query_used})
+
             session.messages.append(
                 Message(
                     message_id=message_id,
@@ -207,7 +222,7 @@ async def chat_stream(req: ChatRequest):
                     content=full_text,
                     visualization=visualization,
                     visualizations=visualizations,
-                    query_used=None,
+                    query_used=query_used,
                 )
             )
         except Exception as e:

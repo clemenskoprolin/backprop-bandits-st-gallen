@@ -24,6 +24,7 @@ import {
   SparklesIcon,
   UserIcon,
   BarChart3Icon,
+  DatabaseIcon,
 } from 'lucide-react'
 import { Message } from '@/lib/types'
 import { submitFeedback } from '@/lib/api'
@@ -341,6 +342,29 @@ export function ChatMessage({
                     <li key={i}>{step}</li>
                   ))}
                 </ol>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* MongoDB query used */}
+        {!isUser && message.query_used && (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <DatabaseIcon className="h-3 w-3" />
+                View MongoDB query
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 rounded-lg border border-border bg-card p-3">
+                <pre className="text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap">
+                  {message.query_used}
+                </pre>
               </div>
             </CollapsibleContent>
           </Collapsible>
