@@ -15,7 +15,7 @@ load_dotenv()
 # MCP Server Configuration - Streamable HTTP transport (Docker)
 MCP_SERVERS = {
     "mongodb": {
-        "url": "http://202.61.251.60:3001/mcp",
+        "url": "https://admin:olmamessen1st@test.koprolin.com/mcp",
         "transport": "streamable_http"
     }
 }
@@ -66,7 +66,7 @@ def render_visualization(chart_type: str, title: str, x_label: str, y_label: str
     ALWAYS call this when displaying aggregated/statistical data.
 
     Args:
-        chart_type: 'bar', 'line', 'pie', etc.
+        chart_type: 'Bar'
         title: Chart title.
         x_label: X axis label.
         y_label: Y axis label.
@@ -74,6 +74,16 @@ def render_visualization(chart_type: str, title: str, x_label: str, y_label: str
     """
     return "Visualization successfully rendered on UI."
 
+@tool
+def submit_answer(answer: str, hypotheses: list[str]) -> str:
+    """
+    Always call this tool to submit your final answer and hypotheses.
+    
+    Args:
+        answer: Clear, concise answer to the user's question
+        hypotheses: List of 3 follow-up hypotheses worth investigating. Empty list if none.
+    """
+    return "Answer submitted."
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
 custom_tools = [get_aggregated_data_for_chart]
@@ -83,6 +93,7 @@ visualization_tool = ToolNode([render_visualization])
 llm = ChatAnthropic(model="claude-sonnet-4-6")
 llm_with_tools = llm.bind_tools(custom_tools)
 llm_visualizer = llm.bind_tools([render_visualization])
+llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
 
 # Will be rebound after MCP tools are loaded
 _all_tools = custom_tools.copy()
@@ -143,7 +154,7 @@ def output_node(state: MessagesState):
         messages = [SystemMessage(content=output_system_prompt)] + messages
     # Claude requires conversation to end with a user message after tool results
     messages = messages + [HumanMessage(content="Given the current conversation, summarize to an answer.")]
-    response = llm.invoke(messages)
+    response = llm_output.invoke(messages)
     return {"messages": [response]}
 
 # def self_critic(state: MessagesState):
@@ -218,6 +229,19 @@ class Agent:
         
         be_professional = "  Be very professional!"
 
+        uuid = """UUIDs
+        In many areas of the Data you will stumble upon UUIDs. We tried to migrate them as best we could, but on some places they are still integral.
+
+        Valuecolumns
+        this is the propably biggest source for UUIDs. The structure of a valucolumn entry, consist of two important metadatas: refId and childId
+
+        refId is a reference to the source test _id
+        childId is id constructed by the `[test.valuecolumns._id].[test.valuecolumn.valuetableId]
+        The UUIDs in childId is a reference to the type of value stored there. In the repository you will find files containing translations for these UUIDs, as well as the possible unittables.
+        for Results (valuecolumn has only a single value), take a look at the file TestResultTypes
+        for Measurements, take a look at the channelParameterMap
+        some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
+
         system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
         AVAILABLE TOOLS:
 
@@ -239,7 +263,7 @@ class Agent:
 
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
-        2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
+        2. After your answer, suggest 3 follow-up hypotheses worth investigating if there are any. Don't always force it.
         """ + similar_data + be_professional
 
         intermediate_output_system_prompt = """briefly summarize the findings

@@ -153,16 +153,11 @@ async def chat_stream(req: ChatRequest):
                             if isinstance(series_data, str):
                                 series_data = json.loads(series_data)
                                 
-                            vis = VisualizationBlock(
-                                type="chart",
-                                data={
-                                    "chart_type": kwargs.get("chart_type", "bar"),
+                            vis = {"chart_type": kwargs.get("chart_type", "bar"),
                                     "title": kwargs.get("title", ""),
                                     "x_label": kwargs.get("x_label", ""),
                                     "y_label": kwargs.get("y_label", ""),
-                                    "series": series_data,
-                                },
-                            )
+                                    "series": series_data,}
                             visualization = vis
                             yield _sse_event("visualization", vis.model_dump())
                         except Exception as e:
@@ -238,22 +233,21 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                     series_data = json.loads(series_data)
                                 except:
                                     series_data = []
-                            visualization = VisualizationBlock(
-                                type="chart",
-                                data={
-                                    "chart_type": kwargs.get("chart_type", "bar"),
+                            visualization = {"chart_type": kwargs.get("chart_type", "bar"),
                                     "title": kwargs.get("title", ""),
                                     "x_label": kwargs.get("x_label", ""),
                                     "y_label": kwargs.get("y_label", ""),
-                                    "series": series_data,
-                                },
-                            )
+                                    "series": series_data,}
                             break
                     if visualization: break
             if visualization: break
         if getattr(msg, "name", None) in ["get_test", "search_tests", "get_aggregated_data_for_chart"]:
             thinking.append(f"Used tool: {msg.name}")
 
+    submitted_answer = text.tool_calls[0]
+    kwargs = submitted_answer['args']
+    text = kwargs.get('answer', '')
+    followups = kwargs.get('hypothesis',[])
     session.messages.append(
         Message(
             message_id=message_id,
@@ -267,9 +261,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
     return ChatResponse(
         session_id=session.session_id,
         message_id=message_id,
-        text=text,
+        text=text['answer'],
         visualization=visualization,
-        followups=[],
+        followups=followups,
         query_used=query,
         thinking=thinking,
     )
