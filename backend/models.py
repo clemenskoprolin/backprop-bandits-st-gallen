@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 
 
 class VisualizationBlock(BaseModel):
-    """Structured JSON consumed by frontend Chart / Table / Cards widgets."""
+    chart_type: str = "bar"
+    title: str = ""
+    x_label: str = ""
+    y_label: str = ""
+    series: list[Any] = []
 
-    type: Literal["chart", "table", "cards", "none"]
-    data: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
