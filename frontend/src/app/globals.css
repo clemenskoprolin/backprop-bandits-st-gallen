@@ -144,6 +144,11 @@
   z-index: 1;
 }
 
+/* During drag, non-dragged items swap instantly (no transition) */
+.is-dragging .react-grid-item:not(.react-draggable-dragging) {
+  transition: none !important;
+}
+
 .react-grid-item.react-draggable-dragging {
   transition: none;
   z-index: 3;
@@ -152,19 +157,11 @@
 
 .react-grid-item > .react-resizable-handle {
   position: absolute;
-  width: 20px;
-  height: 20px;
 }
 
 .react-grid-item > .react-resizable-handle::after {
   content: "";
   position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--border);
-  border-bottom: 2px solid var(--border);
   opacity: 0;
   transition: opacity 150ms ease;
 }
@@ -176,7 +173,37 @@
 .react-resizable-handle-se {
   bottom: 0;
   right: 0;
+  width: 20px;
+  height: 20px;
   cursor: se-resize;
+}
+
+.react-resizable-handle-se::after {
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+}
+
+.react-resizable-handle-e {
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 40px;
+  cursor: ew-resize;
+}
+
+.react-resizable-handle-e::after {
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 24px;
+  border-right: 2px solid var(--border);
+  border-radius: 2px;
 }
 
 .react-grid-placeholder {

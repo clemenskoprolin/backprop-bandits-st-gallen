@@ -24,15 +24,7 @@ Tech stack:
 Run backend:  uvicorn backend.main:app --reload   (from project root)
 Run frontend: cd frontend && npm run dev
 
-================================================================================
-                              SYSTEM ARCHITECTURE
-================================================================================
-
-You can paste this in place of the diagram and keep the rest unchanged.
-
-⸻
-
-SYSTEM ARCHITECTURE (TEXT DESCRIPTION)
+SYSTEM ARCHITECTURE
 
 The system consists of five main layers:
 	1.	Frontend (Next.js UI)

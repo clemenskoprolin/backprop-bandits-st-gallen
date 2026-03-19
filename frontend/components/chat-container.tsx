@@ -353,7 +353,7 @@ export function ChatContainer() {
 
       {/* ── Dashboard Panel ── */}
       {(showDashboard && hasWidgets || dragMode === 'restore-dashboard') && (
-        <div className={cn('flex-1 min-w-0 h-full')}>
+        <div className={cn('flex-1 min-w-0 h-full overflow-hidden')}>
           <DashboardPanel
             showChat={showChat}
             onToggleChat={() => setShowChat(!showChat)}

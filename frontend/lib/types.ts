@@ -86,9 +86,9 @@ export interface FeedbackPayload {
 export type WidgetSize = 'small' | 'medium' | 'large'
 
 export const WIDGET_SIZE_CONFIG: Record<WidgetSize, { w: number; h: number }> = {
-  small: { w: 1, h: 1 },   // Half width
-  medium: { w: 1, h: 1 },  // Half width
-  large: { w: 1, h: 1 },   // Half width (two fit side-by-side)
+  small: { w: 1, h: 1 },
+  medium: { w: 1, h: 1 },  // Single cell
+  large: { w: 2, h: 1 },   // Double width, same height
 }
 
 // Dashboard widget system

@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import GridLayout, { Layout } from 'react-grid-layout'
 import {
   XIcon,
   DownloadIcon,
@@ -236,11 +235,13 @@ function DashboardWidgetCard({
   onRemove,
   onMaximize,
   onDownload,
+  onDragHandleDown,
 }: {
   widget: DashboardWidget
   onRemove: () => void
   onMaximize: () => void
   onDownload: () => void
+  onDragHandleDown?: (e: React.PointerEvent) => void
 }) {
   const renderVisualization = () => {
     const { visualization } = widget
@@ -269,16 +270,16 @@ function DashboardWidgetCard({
   }
 
   return (
-    <Card className="h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden">
+    <Card className="h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none">
       <CardHeader className="py-1.5 px-3 shrink-0 border-b border-border/30">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-hidden">
           {/* Drag handle - always visible */}
-          <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-1 rounded hover:bg-muted transition-colors">
+          <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-1 rounded hover:bg-muted transition-colors" onPointerDown={onDragHandleDown}>
             <GripVerticalIcon className="h-4 w-4 text-muted-foreground" />
           </div>
-          <CardTitle className="text-sm font-medium truncate flex-1">{getTitle()}</CardTitle>
+          <CardTitle className="text-sm font-medium truncate flex-1 min-w-0">{getTitle()}</CardTitle>
           {/* Action buttons */}
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-0.5 shrink-0">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDownload}>
@@ -386,24 +387,14 @@ function FullscreenWidget({
   )
 }
 
-// Fixed pixel width per grid column — widgets stay this size and reflow as the container grows
+// Fixed pixel width per grid column
 const COLUMN_WIDTH = 340
 const GRID_GAP = 16
 const ROW_HEIGHT = 240
 
-/**
- * Find which layout item's pre-drag center falls inside `target`'s bounds.
- * Returns undefined when the dragged item isn't covering anyone.
- */
-function findDisplaced(items: Layout[], targetId: string, target: { x: number; y: number; w: number; h: number }) {
-  return items.find((item) => {
-    if (item.i === targetId) return false
-    const cx = item.x + item.w / 2
-    const cy = item.y + item.h / 2
-    return cx >= target.x && cx < target.x + target.w &&
-           cy >= target.y && cy < target.y + target.h
-  })
-}
+const toPixelX = (gx: number) => gx * (COLUMN_WIDTH + GRID_GAP)
+const toPixelY = (gy: number) => gy * (ROW_HEIGHT + GRID_GAP)
+const itemWidth = (w: number) => w * COLUMN_WIDTH + (w - 1) * GRID_GAP
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
   const { dashboardWidgets, removeWidget, updateWidgetLayouts, setShowDashboard } = useChatStore()
@@ -411,11 +402,27 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Swap-during-drag refs — we mutate these so react-grid-layout doesn't fight us
-  // currentLayoutRef = the "truth" that evolves as swaps happen during the drag
-  const currentLayoutRef = useRef<Layout[]>([])
-  const dragOriginRef = useRef<{ i: string; x: number; y: number } | null>(null)
-  const lastSwapTargetRef = useRef<string | null>(null)
+  // Keep a ref to latest widgets so pointer handlers always read fresh data
+  const widgetsRef = useRef(dashboardWidgets)
+  widgetsRef.current = dashboardWidgets
+
+  // ── Drag state ──
+  const dragRef = useRef<{
+    widgetId: string
+    startPointerX: number
+    startPointerY: number
+    startPx: number
+    startPy: number
+  } | null>(null)
+  const [dragVisual, setDragVisual] = useState<{ widgetId: string; px: number; py: number } | null>(null)
+
+  // ── Resize state ──
+  const resizeRef = useRef<{
+    widgetId: string
+    startPointerX: number
+    startW: number
+  } | null>(null)
+  const [resizeVisualWidth, setResizeVisualWidth] = useState<{ widgetId: string; width: number } | null>(null)
 
   // Measure container width
   useEffect(() => {
@@ -429,85 +436,126 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     return () => observer.disconnect()
   }, [])
 
-  // Responsive column count based on container width
   const cols = useMemo(() => Math.max(1, Math.floor((containerWidth + GRID_GAP) / (COLUMN_WIDTH + GRID_GAP))), [containerWidth])
-
-  // Grid pixel width so react-grid-layout renders cells at ~COLUMN_WIDTH
   const gridWidth = cols * COLUMN_WIDTH + (cols - 1) * GRID_GAP
 
-  // Convert widgets to grid layout
-  const storeLayout: Layout[] = useMemo(() =>
-    dashboardWidgets.map((w) => ({
-      i: w.id,
-      x: w.layout.x,
-      y: w.layout.y,
-      w: Math.min(w.layout.w, cols),
-      h: w.layout.h,
-      minW: 1,
-      minH: 1,
-      maxW: cols,
-      maxH: 3,
-    })),
-    [dashboardWidgets, cols]
-  )
+  // ── Drag handle ──
+  const handleDragHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
+    e.preventDefault()
+    const widget = widgetsRef.current.find((w) => w.id === widgetId)
+    if (!widget) return
+    dragRef.current = {
+      widgetId,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      startPx: toPixelX(widget.layout.x),
+      startPy: toPixelY(widget.layout.y),
+    }
+    setDragVisual({ widgetId, px: toPixelX(widget.layout.x), py: toPixelY(widget.layout.y) })
+  }, [])
 
-  const commitLayout = useCallback((newLayout: Layout[]) => {
-    const updates = newLayout.map((item) => ({
-      id: item.i,
-      layout: { x: item.x, y: item.y, w: item.w, h: item.h },
-    }))
-    updateWidgetLayouts(updates)
-  }, [updateWidgetLayouts])
+  // ── Resize handle ──
+  const handleResizeHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const widget = widgetsRef.current.find((w) => w.id === widgetId)
+    if (!widget) return
+    resizeRef.current = {
+      widgetId,
+      startPointerX: e.clientX,
+      startW: itemWidth(widget.layout.w),
+    }
+    setResizeVisualWidth({ widgetId, width: itemWidth(widget.layout.w) })
+  }, [])
 
-  // ── Drag handlers — immediate swap by committing to the store during drag ──
+  // ── Global pointer move / up ──
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      // ── Drag ──
+      if (dragRef.current) {
+        const drag = dragRef.current
+        const newPx = drag.startPx + (e.clientX - drag.startPointerX)
+        const newPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
+        setDragVisual({ widgetId: drag.widgetId, px: newPx, py: newPy })
 
-  const handleDragStart = useCallback((_layout: Layout[], oldItem: Layout) => {
-    currentLayoutRef.current = storeLayout.map((item) => ({ ...item }))
-    dragOriginRef.current = { i: oldItem.i, x: oldItem.x, y: oldItem.y }
-    lastSwapTargetRef.current = null
-  }, [storeLayout])
+        const widgets = widgetsRef.current
+        const dragged = widgets.find((w) => w.id === drag.widgetId)
+        if (!dragged) return
 
-  const handleDrag = useCallback((_layout: Layout[], _oldItem: Layout, newItem: Layout) => {
-    const current = currentLayoutRef.current
-    const origin = dragOriginRef.current
-    if (!current.length || !origin) return
+        const dw = itemWidth(dragged.layout.w)
+        const centerX = newPx + dw / 2
+        const centerY = newPy + ROW_HEIGHT / 2
 
-    const displaced = findDisplaced(current, newItem.i, newItem)
+        for (const other of widgets) {
+          if (other.id === drag.widgetId) continue
+          const ox = toPixelX(other.layout.x)
+          const oy = toPixelY(other.layout.y)
+          const ow = itemWidth(other.layout.w)
+          if (centerX >= ox && centerX < ox + ow && centerY >= oy && centerY < oy + ROW_HEIGHT) {
+            // Swap positions
+            updateWidgetLayouts([
+              { id: drag.widgetId, layout: { ...dragged.layout, x: other.layout.x, y: other.layout.y } },
+              { id: other.id, layout: { ...other.layout, x: dragged.layout.x, y: dragged.layout.y } },
+            ])
+            // Reset drag origin to the new grid slot
+            drag.startPx = toPixelX(other.layout.x)
+            drag.startPy = toPixelY(other.layout.y)
+            drag.startPointerX = e.clientX
+            drag.startPointerY = e.clientY
+            break
+          }
+        }
+      }
 
-    // No overlap or same target as last time — nothing to do
-    if (!displaced || displaced.i === lastSwapTargetRef.current) return
+      // ── Resize ──
+      if (resizeRef.current) {
+        const resize = resizeRef.current
+        const newWidth = Math.max(COLUMN_WIDTH / 2, resize.startW + (e.clientX - resize.startPointerX))
+        setResizeVisualWidth({ widgetId: resize.widgetId, width: newWidth })
+      }
+    }
 
-    // Perform the swap: displaced item goes to where the dragged item currently lives
-    // in our truth (= origin, which we update after each swap)
-    const swapped = current.map((item) => {
-      if (item.i === displaced.i) return { ...item, x: origin.x, y: origin.y }
-      return { ...item }
-    })
+    const onUp = (e: PointerEvent) => {
+      // ── Finish drag — snap to nearest empty cell or stay ──
+      if (dragRef.current) {
+        const drag = dragRef.current
+        const widgets = widgetsRef.current
+        const dragged = widgets.find((w) => w.id === drag.widgetId)
+        if (dragged) {
+          const finalPx = drag.startPx + (e.clientX - drag.startPointerX)
+          const finalPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
+          const targetX = Math.max(0, Math.min(cols - dragged.layout.w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
+          const targetY = Math.max(0, Math.round(finalPy / (ROW_HEIGHT + GRID_GAP)))
+          const occupied = widgets.some((w) => w.id !== drag.widgetId && w.layout.x === targetX && w.layout.y === targetY)
+          if (!occupied) {
+            updateWidgetLayouts([{ id: drag.widgetId, layout: { ...dragged.layout, x: targetX, y: targetY } }])
+          }
+        }
+        dragRef.current = null
+        setDragVisual(null)
+      }
 
-    // Update the origin to the displaced item's old position (so the next swap
-    // knows where "home" is for the dragged item's new implicit slot)
-    dragOriginRef.current = { i: origin.i, x: displaced.x, y: displaced.y }
-    currentLayoutRef.current = swapped
-    lastSwapTargetRef.current = displaced.i
+      // ── Finish resize — snap to 1 or 2 columns ──
+      if (resizeRef.current) {
+        const resize = resizeRef.current
+        const finalWidth = resize.startW + (e.clientX - resize.startPointerX)
+        const snappedW = finalWidth > COLUMN_WIDTH * 1.5 ? Math.min(2, cols) : 1
+        const widget = widgetsRef.current.find((w) => w.id === resize.widgetId)
+        if (widget) {
+          updateWidgetLayouts([{ id: resize.widgetId, layout: { ...widget.layout, w: snappedW } }])
+        }
+        resizeRef.current = null
+        setResizeVisualWidth(null)
+      }
+    }
 
-    // Commit immediately — this causes a re-render with the swapped positions
-    commitLayout(swapped)
-  }, [commitLayout])
-
-  const handleDragStop = useCallback((_currentLayout: Layout[], _oldItem: Layout, newItem: Layout) => {
-    const current = currentLayoutRef.current
-    if (!current.length) return
-
-    // Commit the dragged item's final resting position
-    const final = current.map((item) =>
-      item.i === newItem.i ? { ...item, x: newItem.x, y: newItem.y } : item
-    )
-    commitLayout(final)
-
-    currentLayoutRef.current = []
-    dragOriginRef.current = null
-    lastSwapTargetRef.current = null
-  }, [commitLayout])
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [cols, updateWidgetLayouts])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
     const data = widget.visualization.data
@@ -521,6 +569,15 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }, [])
+
+  // Grid container height based on widget positions
+  const gridHeight = useMemo(() => {
+    if (dashboardWidgets.length === 0) return 0
+    const maxBottom = dashboardWidgets.reduce((max, w) => Math.max(max, (w.layout.y + w.layout.h) * (ROW_HEIGHT + GRID_GAP)), 0)
+    return maxBottom - GRID_GAP
+  }, [dashboardWidgets])
+
+  const isDragging = dragVisual !== null
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -565,8 +622,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1">
-        <div ref={containerRef} className="p-4 min-h-full">
+      <ScrollArea className="flex-1 min-h-0">
+        <div ref={containerRef} className={cn('p-4', isDragging && 'cursor-grabbing')}>
           {dashboardWidgets.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="rounded-full bg-muted p-4 mb-4">
@@ -578,35 +635,47 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
               </p>
             </div>
           ) : (
-            <GridLayout
-              className="layout"
-              layout={storeLayout}
-              cols={cols}
-              rowHeight={ROW_HEIGHT}
-              width={gridWidth}
-              onDragStart={handleDragStart}
-              onDrag={handleDrag}
-              onDragStop={handleDragStop}
-              draggableHandle=".drag-handle"
-              compactType={null}
-              preventCollision={false}
-              isResizable={false}
-              isDraggable={true}
-              margin={[GRID_GAP, GRID_GAP]}
-              containerPadding={[0, 0]}
-              useCSSTransforms={true}
-            >
-              {dashboardWidgets.map((widget) => (
-                <div key={widget.id}>
-                  <DashboardWidgetCard
-                    widget={widget}
-                    onRemove={() => removeWidget(widget.id)}
-                    onMaximize={() => setFullscreenWidget(widget)}
-                    onDownload={() => handleDownload(widget)}
-                  />
-                </div>
-              ))}
-            </GridLayout>
+            <div style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
+              {dashboardWidgets.map((widget) => {
+                const isBeingDragged = dragVisual?.widgetId === widget.id
+                const isBeingResized = resizeVisualWidth?.widgetId === widget.id
+
+                const px = isBeingDragged ? dragVisual.px : toPixelX(widget.layout.x)
+                const py = isBeingDragged ? dragVisual.py : toPixelY(widget.layout.y)
+                const w = isBeingResized ? resizeVisualWidth.width : itemWidth(widget.layout.w)
+
+                return (
+                  <div
+                    key={widget.id}
+                    style={{
+                      position: 'absolute',
+                      transform: `translate(${px}px, ${py}px)`,
+                      width: w,
+                      height: ROW_HEIGHT,
+                      transition: isBeingDragged || isBeingResized ? 'none' : 'transform 200ms ease, width 200ms ease',
+                      zIndex: isBeingDragged ? 10 : 1,
+                    }}
+                  >
+                    <DashboardWidgetCard
+                      widget={widget}
+                      onRemove={() => removeWidget(widget.id)}
+                      onMaximize={() => setFullscreenWidget(widget)}
+                      onDownload={() => handleDownload(widget)}
+                      onDragHandleDown={(e) => handleDragHandleDown(widget.id, e)}
+                    />
+                    {/* Resize handle — right edge */}
+                    {cols >= 2 && (
+                      <div
+                        className="absolute right-0 top-0 w-3 h-full cursor-ew-resize flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
+                        onPointerDown={(e) => handleResizeHandleDown(widget.id, e)}
+                      >
+                        <div className="w-1 h-6 rounded border-r-2 border-border" />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           )}
         </div>
       </ScrollArea>

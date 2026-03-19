@@ -99,7 +99,7 @@ export function SessionSidebar() {
                     <SidebarMenuButton
                       isActive={isActive}
                       onClick={() => loadSession(session.session_id)}
-                      className="py-3.5"
+                      className="py-6"
                     >
                       <MessageSquareIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <div className="flex flex-col min-w-0 flex-1 gap-0.5">
