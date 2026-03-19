@@ -262,7 +262,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     messages = response['messages']
     print(messages)
     ai_msg = messages[-1]
-    text = ai_msg.content
+    text = ai_msg
     # ai_msg = messages
     # text = ai_msg
     visualization = None
@@ -299,7 +299,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
     submitted_answer = text.tool_calls[0]
     kwargs = submitted_answer['args']
     text = kwargs.get('answer', '')
-    followups = kwargs.get('hypothesis',[])
+    followups = kwargs.get('hypotheses',[])
+    print(text)
+    print(followups)
     session.messages.append(
         Message(
             message_id=message_id,
@@ -313,7 +315,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     return ChatResponse(
         session_id=session.session_id,
         message_id=message_id,
-        text=text['answer'],
+        text=text,
         visualization=visualization,
         followups=followups,
         query_used=query,

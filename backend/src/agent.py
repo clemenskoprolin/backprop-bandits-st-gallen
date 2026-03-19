@@ -1,3 +1,4 @@
+import base64
 import json
 import concurrent.futures
 from typing import Literal
@@ -10,14 +11,27 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 from src import db
+from langchain_core.messages import trim_messages
 
 load_dotenv()
 
 # MCP Server Configuration - Streamable HTTP transport (Docker)
+credentials = base64.b64encode(b"admin:olmamessen1st").decode()
+
+# MCP_SERVERS = {
+#     "mongodb": {
+#         "url": "https://test.koprolin.com/mcp",
+#         "transport": "streamable_http",
+#         "headers": {
+#             "Authorization": f"Basic {credentials}"
+#         }
+#     }
+# }
+
 MCP_SERVERS = {
     "mongodb": {
-        "url": "https://admin:olmamessen1st@test.koprolin.com/mcp",
-        "transport": "streamable_http"
+        "url": "http://202.61.251.60:3001/mcp",
+        "transport": "streamable_http",
     }
 }
 
@@ -163,12 +177,14 @@ def run_python_analysis(code: str, data_json: str) -> str:
         "result": serialized_result,
     })
 
+
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
+custom_tools = [get_aggregated_data_for_chart, run_python_analysis] 
 tool_node = ToolNode(custom_tools)
 visualization_tool = ToolNode([render_visualization])
 
-llm = ChatAnthropic(model="claude-sonnet-4-6")
+# llm = ChatAnthropic(model="claude-sonnet-4-6")
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
 llm_with_tools = llm.bind_tools(custom_tools)
 llm_visualizer = llm.bind_tools([render_visualization])
 llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
@@ -210,84 +226,84 @@ async def shutdown_mcp_client():
 
 
 
-system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
+# system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
 
-AVAILABLE TOOLS:
+# AVAILABLE TOOLS:
 
-MongoDB (from MCP server):
-- `find` - Query documents with filters, projection, and sorting
-- `aggregate` - Run aggregation pipelines
-- `collection-schema` - Understand collection structure
-- `list-collections` - See available collections
-- `count` - Count matching documents
+# MongoDB (from MCP server):
+# - `find` - Query documents with filters, projection, and sorting
+# - `aggregate` - Run aggregation pipelines
+# - `collection-schema` - Understand collection structure
+# - `list-collections` - See available collections
+# - `count` - Count matching documents
 
-Visualization:
-- `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-- `render_visualization` - Display charts on the UI
+# Visualization:
+# - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
+# - `render_visualization` - Display charts on the UI
 
-Statistical Analysis:
-- `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data
+# Statistical Analysis:
+# - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data
 
-WORKFLOW FOR STATISTICAL QUESTIONS:
-1. Use `find` or `aggregate` to retrieve raw data as a JSON list.
-2. Pass that JSON string directly into `run_python_analysis` as `data_json`.
-3. Write a Python snippet that assigns the final answer to `result`.
-4. Use the returned `result` to compose your natural-language answer.
+# WORKFLOW FOR STATISTICAL QUESTIONS:
+# 1. Use `find` or `aggregate` to retrieve raw data as a JSON list.
+# 2. Pass that JSON string directly into `run_python_analysis` as `data_json`.
+# 3. Write a Python snippet that assigns the final answer to `result`.
+# 4. Use the returned `result` to compose your natural-language answer.
 
-Example — significance test between two groups:
-  code = \"\"\"
-  group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
-  group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
-  t, p = stats.ttest_ind(group_a, group_b)
-  result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
-  \"\"\"
+# Example — significance test between two groups:
+#   code = \"\"\"
+#   group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
+#   group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
+#   t, p = stats.ttest_ind(group_a, group_b)
+#   result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
+#   \"\"\"
 
-Example — trend / degradation over time:
-  code = \"\"\"
-  vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
-  x = np.arange(len(vals))
-  slope, _, _, p, _ = stats.linregress(x, vals)
-  result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
-  \"\"\"
+# Example — trend / degradation over time:
+#   code = \"\"\"
+#   vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
+#   x = np.arange(len(vals))
+#   slope, _, _, p, _ = stats.linregress(x, vals)
+#   result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
+#   \"\"\"
 
-ALWAYS call `render_visualization` when showing aggregated or statistical data.
-"""
+# ALWAYS call `render_visualization` when showing aggregated or statistical data.
+# """
 
-output_system_prompt = """You are a material testing AI assistant.
+# output_system_prompt = """You are a material testing AI assistant.
 
-Based on the tool results and analysis above:
-1. Write a clear, concise answer to the user's question
-2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
-"""
+# Based on the tool results and analysis above:
+# 1. Write a clear, concise answer to the user's question
+# 2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
+# """
 
-intermediate_output_system_prompt = """briefly summarize the findings
-"""
+# intermediate_output_system_prompt = """briefly summarize the findings
+# """
 
-self_critic_system_prompt = """You are a critical reviewer of material testing analysis.
+# self_critic_system_prompt = critic_system_prompt = """You are a critical reviewer of material testing analysis.
 
-Review the previous conversation history and output ONLY a JSON object:
-{
-  "verdict": "accept|retry",
-  "confidence": "high|medium|low",
-  "text": "The verdict you made and why you made this verdict",
-  "missing_data": "what tool should be called to improve the answer, or null",
-  "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
-  "tool_args": {...} or null,
-  "caveats": ["caveat 1", "caveat 2"]
-}
+# Review the previous conversation history and output ONLY a JSON object:
+# {
+#   "verdict": "accept|retry",
+#   "confidence": "high|medium|low",
+#   "text": "The verdict you made and why you made this verdict",
+#   "missing_data": "what tool should be called to improve the answer, or null",
+#   "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
+#   "tool_args": {...} or null,
+#   "caveats": ["caveat 1", "caveat 2"]
+# }
 
-Verdict rules:
-- accept: answer is well supported by data
-- retry: answer needs more data, specify which tool to call
-- escalate: query is too complex, needs deeper analysis
-"""
+# Verdict rules:
+# - accept: answer is well supported by data
+# - retry: answer needs more data, specify which tool to call
+# - escalate: query is too complex, needs deeper analysis
+# """
 
-visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
-You should inspect if the previous results would benefit from a visualization. If you want to visualize
-use the render_visualization function to visualize the data. If not, still call the function with none values."""
+# visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
+# You should inspect if the previous results would benefit from a visualization. If you want to visualize
+# use the render_visualization function to visualize the data. If not, still call the function with none values."""
 
 def call_model(state: MessagesState):
-    messages = state["messages"]
+    messages = state['messages']
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=system_prompt)] + messages
     response = llm_with_tools.invoke(messages)
@@ -350,12 +366,13 @@ def output_node(state: MessagesState):
 #     return {"messages": [response]}
 
 def visualizer(state: MessagesState):
-    messages = state["messages"]
+    messages = state['messages']
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message
     messages = messages + [HumanMessage(content="Based on the results, decide if visualization is needed.")]
     response = llm_visualizer.invoke(messages)
+    print("hi",response)
     return {"messages": [response]}
 
 def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
@@ -378,9 +395,9 @@ class Agent:
         self.similar_text = similar_text
         similar_data = "you are given the following similar text from a vectordb: " + self.similar_text
 
+        be_professional = "Be very professional!"
+
         global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
-        
-        be_professional = "  Be very professional!"
 
         uuid = """UUIDs
         In many areas of the Data you will stumble upon UUIDs. We tried to migrate them as best we could, but on some places they are still integral.
@@ -443,7 +460,7 @@ class Agent:
 
         visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. If not, still call the function with none values.""" + similar_data
+        use the render_visualization function to visualize the data. Visualize if possible! If not, still call the function with none values.""" + similar_data
 
 
     def build_agent(self):
@@ -456,9 +473,9 @@ class Agent:
         graph_builder.add_node("output", output_node)
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "agent")
-        # graph_builder.add_edge("visualizer", "visual_tool")
-        # graph_builder.add_edge("visual_tool", "output")
+        graph_builder.add_edge("tools", "visualizer")
+        graph_builder.add_edge("visualizer", "visual_tool")
+        graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", END)
         return graph_builder.compile(checkpointer=memory)
 
