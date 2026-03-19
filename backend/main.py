@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import chat, feedback, templates
+from routers import chat, feedback
 from src.agent import init_mcp_client, shutdown_mcp_client
 
 
@@ -34,14 +34,12 @@ app = FastAPI(title="Backprop Bandits — Material Testing AI", lifespan=lifespa
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(chat.router)
 app.include_router(feedback.router)
-app.include_router(templates.router)
 
 
 @app.get("/")

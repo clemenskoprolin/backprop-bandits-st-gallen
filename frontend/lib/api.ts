@@ -1,7 +1,6 @@
 import { Session, Message, Visualization, Template } from './types'
 import { mockTemplates } from './mock-data'
 
-// When no explicit URL is set, use relative paths so Next.js rewrites proxy to the backend
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
 
 // ---------------------------------------------------------------------------
@@ -273,6 +272,7 @@ export async function sendMessageStream(
 
   const decoder = new TextDecoder()
   let buffer = ''
+  let doneEmitted = false
 
   try {
     while (true) {
@@ -329,7 +329,10 @@ export async function sendMessageStream(
               callbacks.onError?.(parsed.message ?? 'Unknown error')
               break
             case 'done':
-              callbacks.onDone?.()
+              if (!doneEmitted) {
+                doneEmitted = true
+                callbacks.onDone?.()
+              }
               break
           }
         } catch {
@@ -339,6 +342,8 @@ export async function sendMessageStream(
     }
   } finally {
     reader.releaseLock()
-    callbacks.onDone?.()
+    if (!doneEmitted) {
+      callbacks.onDone?.()
+    }
   }
 }
