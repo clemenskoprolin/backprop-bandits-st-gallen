@@ -43,6 +43,10 @@ The system consists of five main layers:
 
 The system is designed so that the LLM produces structured instructions, not UI, and never accesses the database without validation.
 
+For development, the MongoDB is not docker, but on  202.61.251.60 with port 27017.
+
+You can access it with `mongosh --host 202.61.251.60 --port 27017` for testing. DO NOT CHANGE DATA THERE ON YOUR OWN.
+
 ⸻
 
 Frontend Layer
