@@ -89,11 +89,20 @@ def _summarize_structure(obj, depth=0, max_depth=5):
     return str(obj)
 
 
-def should_continue(state: MessagesState) -> Literal["tools", "output"]:
+def _resolve_data_json(data_store: dict[str, str], data_json: str, data_id: str) -> str:
+    """Resolve payload from side-channel storage when a data_id is provided."""
+    if data_json:
+        return data_json
+    if data_id and data_id in data_store:
+        return data_store[data_id]
+    return ""
+
+
+def should_continue(state: MessagesState) -> Literal["tools", "visualizer"]:
     last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "tools"
-    return "output"
+    return "visualizer"
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +110,7 @@ def should_continue(state: MessagesState) -> Literal["tools", "output"]:
 # ---------------------------------------------------------------------------
 
 class Agent:
-    def __init__(self, message, similar_text):
+    def __init__(self, message, similar_text, dashboard_widgets=None):
         self.message = message
         self.similar_text = similar_text
         self._data_store: dict[str, str] = {}
@@ -111,6 +120,24 @@ class Agent:
 
         similar_data = "you are given the following similar text from a vectordb: " + self.similar_text
         be_professional = "  Be very professional!"
+
+        self.dashboard_widgets = dashboard_widgets or []
+
+        # Build dashboard context string
+        dashboard_context = ""
+        if self.dashboard_widgets:
+            widget_descriptions = []
+            for w in self.dashboard_widgets:
+                desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)})"
+                widget_descriptions.append(desc)
+            dashboard_context = f"""
+
+CURRENT DASHBOARD STATE:
+The user currently has {len(self.dashboard_widgets)} widget(s) on their dashboard:
+{chr(10).join(widget_descriptions)}
+
+You can reference existing widgets when answering. If the user asks to rearrange or reorganize the dashboard, you can create new visualizations that replace or complement existing ones.
+"""
 
         # ---- System prompts (instance-scoped) ----
 
@@ -142,6 +169,7 @@ class Agent:
         from the summary into `data_json` — just pass the `data_id` and the full data loads automatically.
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
+        `render_visualization` can consume either inline `data_json` or side-channel `data_id`.
         """ + similar_data
 
         self._output_system_prompt = """You are a material testing AI assistant.
@@ -182,7 +210,18 @@ class Agent:
             return json.dumps(results, default=str)
 
         @tool
-        def render_visualization(chart_type: str, title: str, x_label: str, y_label: str, series_json: str) -> str:
+        def render_visualization(
+            chart_type: str,
+            title: str,
+            x_label: str = "",
+            y_label: str = "",
+            series_json: str = "",
+            data_json: str = "",
+            data_id: str = "",
+            description: str = "",
+            x_axis_key: str = "name",
+            chart_config_json: str = "{}",
+        ) -> str:
             """
             Render a chart on the user's dashboard.
             ALWAYS call this when displaying aggregated/statistical data.
@@ -192,9 +231,30 @@ class Agent:
                 title: Chart title.
                 x_label: X axis label.
                 y_label: Y axis label.
-                series_json: Dataset as JSON string from get_aggregated_data_for_chart or formatted data.
+                series_json: Legacy dataset JSON string.
+                data_json: Dataset JSON string.
+                data_id: Side-channel ID for large stored datasets.
+                description: Optional chart description.
+                x_axis_key: Key used for x-axis in the frontend chart renderer.
+                chart_config_json: Optional chart config JSON.
             """
-            return "Visualization successfully rendered on UI."
+            resolved = _resolve_data_json(data_store, data_json or series_json, data_id)
+            if data_id and not resolved:
+                return f"Visualization skipped: unknown data_id '{data_id}'."
+
+            if resolved:
+                try:
+                    parsed = json.loads(resolved)
+                    point_count = len(parsed) if isinstance(parsed, list) else 1
+                except json.JSONDecodeError:
+                    return "Visualization skipped: invalid JSON in chart dataset."
+            else:
+                point_count = 0
+
+            return (
+                "Visualization successfully rendered on UI. "
+                f"data_points={point_count}, chart_type={chart_type}, x_axis_key={x_axis_key}"
+            )
 
         @tool
         def submit_answer(answer: str, hypotheses: list[str]) -> str:
@@ -255,8 +315,7 @@ class Agent:
                 })
 
             # Resolve data from side channel if data_id provided
-            if data_id and data_id in data_store:
-                data_json = data_store[data_id]
+            data_json = _resolve_data_json(data_store, data_json, data_id)
 
             try:
                 parsed_data = json.loads(data_json) if data_json else []
@@ -332,13 +391,13 @@ class Agent:
         # ---- Build tool collections and LLM bindings (instance-scoped) ----
 
         custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
-        all_tools = custom_tools + mcp_tools
+        _dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
+        all_tools = custom_tools + mcp_tools + _dashboard_tools
         self._tool_node = ToolNode(all_tools)
-        self._dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
-        self._visualization_tool = ToolNode(self._dashboard_tools)
+        self._visualization_tool = ToolNode(_dashboard_tools)
         self._submit_tool = ToolNode([submit_answer])
         self._llm_with_tools = llm.bind_tools(all_tools)
-        self._llm_visualizer = llm.bind_tools(self._dashboard_tools)
+        self._llm_visualizer = llm.bind_tools(_dashboard_tools)
         self._llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
 
         # ---- Graph node closures (capture self's prompts and tools) ----
@@ -398,9 +457,6 @@ class Agent:
             messages = state["messages"]
             if not messages or messages[0].type != "system":
                 messages = [SystemMessage(content=self._output_system_prompt)] + messages
-            # Trim history: keep system + user question + last 6 messages to reduce token usage
-            if len(messages) > 8:
-                messages = messages[:2] + messages[-6:]
             messages = messages + [HumanMessage(content="Given the current conversation, summarize to an answer.")]
             response = self._llm_output.invoke(messages)
             return {"messages": [response]}

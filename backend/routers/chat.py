@@ -80,6 +80,47 @@ def _get_or_create_session(session_id: str | None) -> Session:
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+
+def _parse_visualization_from_tool_input(
+    kwargs: dict,
+    data_store: dict[str, str] | None = None,
+) -> dict:
+    """Normalize render_visualization tool args into the frontend visualization payload."""
+    data_json = kwargs.get("data_json", "")
+    if not data_json:
+        data_json = kwargs.get("series_json", "")
+
+    data_id = kwargs.get("data_id", "")
+    if not data_json and data_id and data_store and data_id in data_store:
+        data_json = data_store[data_id]
+
+    data = data_json or []
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = []
+
+    chart_config = kwargs.get("chart_config_json", "{}")
+    if isinstance(chart_config, str):
+        try:
+            chart_config = json.loads(chart_config)
+        except json.JSONDecodeError:
+            chart_config = {}
+
+    return {
+        "type": "chart",
+        "data": {
+            "chartType": kwargs.get("chart_type", "bar").lower(),
+            "title": kwargs.get("title", ""),
+            "description": kwargs.get("description", ""),
+            "xAxisKey": kwargs.get("x_axis_key", "name"),
+            "data": data,
+            "chartConfig": chart_config,
+        },
+    }
+
+
 def get_similarity_by_query(message: str, session_id):
     return "hello"
 
@@ -106,14 +147,14 @@ async def chat_stream(req: ChatRequest):
             tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
             agent = tmp.create()
             config = {"configurable": {"thread_id": session.session_id}}
-            
+
             full_text = ""
             visualization = None
             visualizations = []
             followups = []
             thinking = []
             query_used = None
-            
+
             async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
                 kind = event["event"]
                 if kind == "on_chat_model_stream":
@@ -123,7 +164,7 @@ async def chat_stream(req: ChatRequest):
                         text = "".join(block.get("text", "") for block in content if block.get("type") == "text")
                     else:
                         text = content
-                    
+
                     if text:
                         full_text += text
                         yield _sse_event("text", {"chunk": text})
@@ -157,27 +198,11 @@ async def chat_stream(req: ChatRequest):
 
                 elif kind == "on_tool_end":
                     tool_name = event["name"]
-                    
+
                     if tool_name == "render_visualization":
                         try:
                             kwargs = event['data'].get("input", {})
-                            data = kwargs.get("data_json", "[]")
-                            if isinstance(data, str):
-                                data = json.loads(data)
-                            chart_config = kwargs.get("chart_config_json", "{}")
-                            if isinstance(chart_config, str):
-                                chart_config = json.loads(chart_config)
-                            visualization = {
-                                "type": "chart",
-                                "data": {
-                                    "chartType": kwargs.get("chart_type", "bar").lower(),
-                                    "title": kwargs.get("title", ""),
-                                    "description": kwargs.get("description", ""),
-                                    "xAxisKey": kwargs.get("x_axis_key", "name"),
-                                    "data": data,
-                                    "chartConfig": chart_config,
-                                },
-                            }
+                            visualization = _parse_visualization_from_tool_input(kwargs, getattr(tmp, "_data_store", None))
                             visualizations.append(visualization)
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
@@ -257,7 +282,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     session.messages.append(Message(role="user", content=req.message))
 
     query = None
-    
+
     from src.agent import Agent
     from langchain_core.messages import HumanMessage
     config = {"configurable": {"thread_id": session.session_id}}
@@ -265,7 +290,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     tmp = Agent(req.message, similar_messages)
     agent = tmp.create()
     response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
-    
+
     # Process output
     messages = response['messages']
     print(messages)
@@ -275,7 +300,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # text = ai_msg
     visualization = None
     thinking = []
-    
+
     # Check if render_visualization was called to fetch the block
     for msg in reversed(messages):
         if getattr(msg, "name", None) == "render_visualization":
@@ -284,29 +309,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
                     for tc in prior_msg.tool_calls:
                         if tc['name'] == 'render_visualization':
                             kwargs = tc['args']
-                            data = kwargs.get("data_json", "[]")
-                            if isinstance(data, str):
-                                try:
-                                    data = json.loads(data)
-                                except:
-                                    data = []
-                            chart_config = kwargs.get("chart_config_json", "{}")
-                            if isinstance(chart_config, str):
-                                try:
-                                    chart_config = json.loads(chart_config)
-                                except:
-                                    chart_config = {}
-                            visualization = {
-                                "type": "chart",
-                                "data": {
-                                    "chartType": kwargs.get("chart_type", "bar").lower(),
-                                    "title": kwargs.get("title", ""),
-                                    "description": kwargs.get("description", ""),
-                                    "xAxisKey": kwargs.get("x_axis_key", "name"),
-                                    "data": data,
-                                    "chartConfig": chart_config,
-                                },
-                            }
+                            visualization = _parse_visualization_from_tool_input(kwargs, getattr(tmp, "_data_store", None))
                             break
                     if visualization: break
             if visualization: break
