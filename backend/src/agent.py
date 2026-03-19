@@ -215,7 +215,7 @@ def run_python_analysis(code: str, data_json: str) -> str:
 
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
+custom_tools = [get_sample_documents, get_aggregated_data_for_chart, run_python_analysis]
 tool_node = ToolNode(custom_tools)
 dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
 visualization_tool = ToolNode(dashboard_tools)
@@ -477,9 +477,32 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - `list-collections` - See available collections
         - `count` - Count matching documents
 
-        Visualization:
+        Custom tools:
+        - `get_sample_documents` - Fetch sample documents from the database to understand the data structure
         - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-        - `render_visualization` - Display charts on the UI (supports: bar, area, line, pie, radar, radial, boxplot)
+        - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
+
+        Statistical Analysis workflow:
+        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data as a JSON list
+        2. Pass that JSON string into `run_python_analysis` as `data_json`
+        3. Write a Python snippet that assigns the final answer to `result`
+        4. Use the returned `result` to compose your natural-language answer
+
+        Example — t-test between two groups:
+          code = \"\"\"
+          group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
+          group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
+          t, p = stats.ttest_ind(group_a, group_b)
+          result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
+          \"\"\"
+
+        Example — trend / degradation over time:
+          code = \"\"\"
+          vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
+          x = np.arange(len(vals))
+          slope, _, _, p, _ = stats.linregress(x, vals)
+          result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
+          \"\"\"
         - `remove_widget` - Remove a widget from the dashboard by its ID
         - `reorder_dashboard` - Reorder widgets on the dashboard by providing widget IDs in desired order
 
