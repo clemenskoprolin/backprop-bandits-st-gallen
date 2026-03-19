@@ -750,8 +750,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         for Measurements, take a look at the channelParameterMap
         some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
 
-        system_prompt = (
-            """You are an AI material testing assistant with MongoDB database access.
+        system_prompt = """You are an AI material testing assistant with MongoDB database access.
 
         {DB_CONTEXT}
 
