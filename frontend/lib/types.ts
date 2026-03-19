@@ -20,6 +20,8 @@ export interface Message {
 export interface Visualization {
   type: 'chart' | 'table' | 'cards' | 'text' | 'paragraphs' | 'empty-diagram' | 'none'
   data: ChartData | TableData | CardsData | TextData | ParagraphsData | EmptyDiagramData | null
+  /** LLM-requested size in HxW format: "1x1", "1x2", "2x1", "2x2" */
+  widgetSize?: string
 }
 
 export interface ChartData {
@@ -100,12 +102,15 @@ export interface FeedbackPayload {
 }
 
 // Widget sizes in a responsive grid (cols computed from container width)
-export type WidgetSize = 'small' | 'medium' | 'large'
+// Format is HxW: h = row-span, w = column-span
+export type WidgetSize = 'small' | 'medium' | 'large' | 'tall' | 'xlarge'
 
 export const WIDGET_SIZE_CONFIG: Record<WidgetSize, { w: number; h: number }> = {
-  small: { w: 1, h: 1 },
-  medium: { w: 1, h: 1 },  // Single cell
-  large: { w: 2, h: 1 },   // Double width, same height
+  small:  { w: 1, h: 1 },  // 1×1
+  medium: { w: 1, h: 1 },  // 1×1
+  large:  { w: 2, h: 1 },  // 1×2 — wide chart (default)
+  tall:   { w: 1, h: 2 },  // 2×1 — tall narrow chart
+  xlarge: { w: 2, h: 2 },  // 2×2 — large square chart
 }
 
 // Dashboard widget system

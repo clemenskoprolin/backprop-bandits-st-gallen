@@ -77,6 +77,7 @@ export function normalizeVisualization(raw: unknown): Visualization | null {
 
     return {
       type: 'chart',
+      widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined,
       data: {
         chartType: chartType as ChartData['chartType'],
         title: (data.title ?? '') as string,
@@ -92,11 +93,11 @@ export function normalizeVisualization(raw: unknown): Visualization | null {
   }
 
   if (type === 'table') {
-    return { type: 'table', data: data as unknown as import('./types').TableData }
+    return { type: 'table', widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined, data: data as unknown as import('./types').TableData }
   }
 
   if (type === 'cards') {
-    return { type: 'cards', data: data as unknown as import('./types').CardsData }
+    return { type: 'cards', widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined, data: data as unknown as import('./types').CardsData }
   }
 
   return null

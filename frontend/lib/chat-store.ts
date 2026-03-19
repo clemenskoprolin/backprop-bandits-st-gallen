@@ -179,6 +179,24 @@ function buildDashboardContext(widgets: DashboardWidget[], selectedIds: string[]
   }))
 }
 
+/** Parse LLM-specified "HxW" string into grid dimensions. */
+function parseWidgetSize(widgetSize: string | undefined, type: string): { size: WidgetSize; w: number; h: number } {
+  if (widgetSize) {
+    const m = widgetSize.match(/^(\d+)x(\d+)$/)
+    if (m) {
+      const h = Math.min(2, Math.max(1, parseInt(m[1])))
+      const w = Math.min(2, Math.max(1, parseInt(m[2])))
+      if (h === 2 && w === 2) return { size: 'xlarge', w: 2, h: 2 }
+      if (h === 2 && w === 1) return { size: 'tall',   w: 1, h: 2 }
+      if (h === 1 && w === 2) return { size: 'large',  w: 2, h: 1 }
+      return { size: 'small', w: 1, h: 1 }
+    }
+  }
+  // Default by visualization type
+  if (type === 'cards') return { size: 'medium', w: 1, h: 1 }
+  return { size: 'large', w: 2, h: 1 }
+}
+
 function addVisualizationWidget(
   state: ChatStore,
   visualization: Visualization,
@@ -186,25 +204,18 @@ function addVisualizationWidget(
   queryUsed?: string | null,
   overridePosition?: { x: number; y: number; w: number } | null,
 ) {
-  const getDefaultSize = (type: string): WidgetSize => {
-    if (type === 'cards') return 'medium'
-    if (type === 'table') return 'large'
-    return 'large'
-  }
-
-  const size = getDefaultSize(visualization.type)
-  const sizeConfig = WIDGET_SIZE_CONFIG[size]
+  const { size, w: sizeW, h: sizeH } = parseWidgetSize(visualization.widgetSize, visualization.type)
 
   let layout: DashboardWidget['layout']
   if (overridePosition) {
-    layout = { x: overridePosition.x, y: overridePosition.y, w: overridePosition.w, h: sizeConfig.h }
+    layout = { x: overridePosition.x, y: overridePosition.y, w: overridePosition.w, h: sizeH }
   } else {
     let maxY = 0
     state.dashboardWidgets.forEach((w) => {
       const bottomY = w.layout.y + w.layout.h
       if (bottomY > maxY) maxY = bottomY
     })
-    layout = { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h }
+    layout = { x: 0, y: maxY, w: sizeW, h: sizeH }
   }
 
   return {

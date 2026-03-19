@@ -107,7 +107,7 @@ async def get_aggregated_data_for_chart(
 
 
 @tool
-def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "", replace_widget_id: str = "") -> str:
+def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "", replace_widget_id: str = "", widget_size: str = "1x2") -> str:
     """
     Render a chart on the user's dashboard.
     ALWAYS call this when displaying aggregated/statistical data.
@@ -131,6 +131,11 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
         replace_widget_id: If the user asked to modify or update an existing chart (e.g. a SELECTED widget), pass that widget's id here.
             The existing chart will be replaced in-place instead of creating a new one.
             Leave empty ("") when creating a brand-new chart.
+        widget_size: Dashboard widget size in HxW format (rows × columns). Choose based on data complexity:
+            "1x1" — compact single cell, good for a single KPI or simple pie chart
+            "1x2" — standard wide chart (default), good for most bar/line/area charts
+            "2x1" — tall narrow chart, good for vertical distributions or ranked lists
+            "2x2" — large square chart, best for complex multi-series, boxplots with many groups, or scatter plots needing detail
     """
     return "Visualization successfully rendered on UI."
 
@@ -607,6 +612,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
         For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
         Use boxplot for comparing distributions (e.g. tensile strength across materials, comparing machines).
         If not, still call the function with none values.
+
+        WIDGET SIZE — choose widget_size based on data complexity (format is HxW, rows × columns):
+        "1x1" — compact single cell: single KPI metric, simple pie chart with ≤5 slices
+        "1x2" — standard wide (DEFAULT): most bar, line, area charts; 2–8 categories
+        "2x1" — tall narrow: vertical ranked bar charts, long label lists, histograms
+        "2x2" — large square: multi-series comparisons, boxplots with many groups (>6), scatter plots, complex time-series with many data points
+        When in doubt, default to "1x2".
 
         MODIFYING EXISTING CHARTS:
         If the user's request is about changing, updating, or modifying a SELECTED widget (marked ⭐),
