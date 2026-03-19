@@ -6,9 +6,8 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { TemplatesDialog } from './templates-dialog'
-import { uploadPdf } from '@/lib/api'
 
-interface UploadedFile {
+export interface UploadedFile {
   name: string
   state: 'uploading' | 'done' | 'error'
 }
@@ -16,45 +15,29 @@ interface UploadedFile {
 interface ChatInputProps {
   onSend: (message: string) => void
   isSending: boolean
-  sessionId: string | null
-  onEnsureSession?: () => Promise<string>
+  uploadedFiles: UploadedFile[]
+  onPickFile: (file: File) => void
+  onRemoveFile: (name: string) => void
   placeholder?: string
 }
 
 export function ChatInput({
   onSend,
   isSending,
-  sessionId,
-  onEnsureSession,
+  uploadedFiles,
+  onPickFile,
+  onRemoveFile,
   placeholder = 'Ask about your material testing data...',
 }: ChatInputProps) {
   const [input, setInput] = useState('')
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
-    const sid = sessionId ?? (onEnsureSession ? await onEnsureSession() : `temp_${Date.now()}`)
-
-    setUploadedFiles((prev) => [...prev, { name: file.name, state: 'uploading' }])
-
-    try {
-      await uploadPdf(file, sid)
-      setUploadedFiles((prev) =>
-        prev.map((f) => (f.name === file.name && f.state === 'uploading' ? { ...f, state: 'done' } : f))
-      )
-    } catch {
-      setUploadedFiles((prev) =>
-        prev.map((f) => (f.name === file.name && f.state === 'uploading' ? { ...f, state: 'error' } : f))
-      )
-    }
-  }
-
-  const removeFile = (name: string) => {
-    setUploadedFiles((prev) => prev.filter((f) => f.name !== name))
+    onPickFile(file)
   }
 
   useEffect(() => {
@@ -69,9 +52,7 @@ export function ChatInput({
     if (!input.trim() || isSending) return
     onSend(input.trim())
     setInput('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -95,7 +76,7 @@ export function ChatInput({
             onChange={handleFileChange}
           />
 
-          {/* PDF attachment cards inside the box */}
+          {/* PDF attachment cards */}
           {uploadedFiles.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {uploadedFiles.map((f) => (
@@ -125,7 +106,7 @@ export function ChatInput({
                   </div>
                   {f.state !== 'uploading' && (
                     <button
-                      onClick={() => removeFile(f.name)}
+                      onClick={() => onRemoveFile(f.name)}
                       className="ml-1 rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <XIcon className="h-3.5 w-3.5" />

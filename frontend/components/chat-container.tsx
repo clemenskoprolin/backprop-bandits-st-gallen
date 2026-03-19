@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ChatMessage } from './chat-message'
-import { ChatInput } from './chat-input'
+import { ChatInput, UploadedFile } from './chat-input'
 import { EmptyState } from './empty-state'
 import { DashboardPanel } from './dashboard-panel'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -63,7 +63,24 @@ export function ChatContainer() {
   const [rawFraction, setRawFraction] = useState(2 / 3)
   const [dragMode, setDragMode] = useState<DragMode>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [uploadToast, setUploadToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [uploadToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+
+  const handleUploadFile = async (file: File) => {
+    if (!currentSession) await createNewSession()
+    const sid = useChatStore.getState().currentSession!.session_id
+    setUploadedFiles((prev) => [...prev, { name: file.name, state: 'uploading' }])
+    try {
+      await uploadPdf(file, sid)
+      setUploadedFiles((prev) =>
+        prev.map((f) => (f.name === file.name && f.state === 'uploading' ? { ...f, state: 'done' } : f))
+      )
+    } catch {
+      setUploadedFiles((prev) =>
+        prev.map((f) => (f.name === file.name && f.state === 'uploading' ? { ...f, state: 'error' } : f))
+      )
+    }
+  }
 
   const hasMessages = messages.length > 0
   const hasWidgets = dashboardWidgets.length > 0
@@ -80,7 +97,9 @@ export function ChatContainer() {
   }, [messages])
 
   const handleSend = (content: string) => {
-    sendUserMessage(content)
+    const attachments = uploadedFiles.filter((f) => f.state === 'done').map((f) => ({ name: f.name }))
+    setUploadedFiles([])
+    sendUserMessage(content, attachments.length ? attachments : undefined)
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -97,15 +116,7 @@ export function ChatContainer() {
     setIsDragOver(false)
     const file = Array.from(e.dataTransfer.files).find((f) => f.name.toLowerCase().endsWith('.pdf'))
     if (!file) return
-    if (!currentSession) await createNewSession()
-    const sid = useChatStore.getState().currentSession!.session_id
-    try {
-      await uploadPdf(file, sid)
-      setUploadToast({ message: `"${file.name}" ingested into knowledge base`, type: 'success' })
-    } catch {
-      setUploadToast({ message: `Failed to ingest "${file.name}"`, type: 'error' })
-    }
-    setTimeout(() => setUploadToast(null), 3500)
+    handleUploadFile(file)
   }
 
   const handleFollowupClick = (followup: string) => {
@@ -396,11 +407,9 @@ export function ChatContainer() {
             <ChatInput
               onSend={handleSend}
               isSending={isSending}
-              sessionId={currentSession?.session_id ?? null}
-              onEnsureSession={async () => {
-                if (!useChatStore.getState().currentSession) await createNewSession()
-                return useChatStore.getState().currentSession!.session_id
-              }}
+              uploadedFiles={uploadedFiles}
+              onPickFile={handleUploadFile}
+              onRemoveFile={(name) => setUploadedFiles((prev) => prev.filter((f) => f.name !== name))}
             />
           </div>
         </div>

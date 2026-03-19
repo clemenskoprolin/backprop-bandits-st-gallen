@@ -15,6 +15,7 @@ export interface Message {
   timestamp: string
   thinking?: string[]
   followups?: string[]
+  attachments?: { name: string }[]
 }
 
 export interface Visualization {

@@ -293,6 +293,7 @@ export interface DashboardWidgetContext {
   chart_type: string
   position: { x: number; y: number; w: number; h: number }
   selected?: boolean
+  selected_data_points?: Record<string, unknown>[]
 }
 
 export async function sendMessageStream(

@@ -29,6 +29,8 @@ interface ChatStore {
   pendingReplacement: { widgetId: string; x: number; y: number; w: number } | null
   /** IDs of widgets currently selected as LLM context. */
   selectedWidgetIds: string[]
+  /** Per-widget selected data points: widgetId → array of selected row objects */
+  selectedDataPoints: Record<string, Record<string, unknown>[]>
   /** Per-session widget cache so positions/sizes survive session switches */
   _sessionWidgetCache: Record<string, DashboardWidget[]>
 
@@ -39,7 +41,7 @@ interface ChatStore {
   createNewSession: () => Promise<void>
   deleteCurrentSession: () => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
-  sendUserMessage: (content: string) => Promise<void>
+  sendUserMessage: (content: string, attachments?: { name: string }[]) => Promise<void>
   setShowChat: (show: boolean) => void
   setShowDashboard: (show: boolean) => void
   clearCurrentSession: () => void
@@ -55,6 +57,9 @@ interface ChatStore {
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) => void
   reorderWidgets: (widgetIds: string[]) => void
   clearNewWidgetFlags: () => void
+  toggleDataPointSelection: (widgetId: string, dataPoint: Record<string, unknown>, isShift: boolean) => void
+  clearDataPointSelection: (widgetId: string) => void
+  clearAllDataPointSelections: () => void
 }
 
 function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
@@ -169,13 +174,14 @@ function getWidgetChartType(widget: DashboardWidget): string {
   return visualization.type
 }
 
-function buildDashboardContext(widgets: DashboardWidget[], selectedIds: string[]): DashboardWidgetContext[] {
+function buildDashboardContext(widgets: DashboardWidget[], selectedIds: string[], selectedDataPoints: Record<string, Record<string, unknown>[]>): DashboardWidgetContext[] {
   return widgets.map((w) => ({
     id: w.id,
     title: getWidgetTitle(w),
     chart_type: getWidgetChartType(w),
     position: { x: w.layout.x, y: w.layout.y, w: w.layout.w, h: w.layout.h },
     selected: selectedIds.includes(w.id),
+    selected_data_points: selectedDataPoints[w.id] ?? [],
   }))
 }
 
@@ -242,6 +248,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   dashboardWidgets: [],
   pendingReplacement: null,
   selectedWidgetIds: [],
+  selectedDataPoints: {},
   _sessionWidgetCache: {},
 
   loadSessions: async () => {
@@ -357,7 +364,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  sendUserMessage: async (content: string) => {
+  sendUserMessage: async (content: string, attachments?: { name: string }[]) => {
     const { currentSession, messages } = get()
     if (!currentSession) return
 
@@ -366,6 +373,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       role: 'user',
       content,
       timestamp: new Date().toISOString(),
+      attachments: attachments?.length ? attachments : undefined,
     }
 
     set({ messages: [...messages, userMessage], isSending: true, isStreaming: true })
@@ -405,7 +413,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       })
     }
 
-    const dashboardCtx = buildDashboardContext(get().dashboardWidgets, get().selectedWidgetIds)
+    const dashboardCtx = buildDashboardContext(get().dashboardWidgets, get().selectedWidgetIds, get().selectedDataPoints)
 
     try {
       await sendMessageStream(currentSession.session_id, content, {
@@ -600,4 +608,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         w.isNew ? { ...w, isNew: false } : w
       ),
     })),
+
+  toggleDataPointSelection: (widgetId, dataPoint, isShift) =>
+    set((state) => {
+      const current = state.selectedDataPoints[widgetId] ?? []
+      const key = JSON.stringify(dataPoint)
+      const already = current.some((p) => JSON.stringify(p) === key)
+      let next: Record<string, unknown>[]
+      if (already) {
+        next = current.filter((p) => JSON.stringify(p) !== key)
+      } else if (isShift) {
+        next = [...current, dataPoint]
+      } else {
+        next = [dataPoint]
+      }
+      return { selectedDataPoints: { ...state.selectedDataPoints, [widgetId]: next } }
+    }),
+
+  clearDataPointSelection: (widgetId) =>
+    set((state) => {
+      const { [widgetId]: _, ...rest } = state.selectedDataPoints
+      return { selectedDataPoints: rest }
+    }),
+
+  clearAllDataPointSelections: () => set({ selectedDataPoints: {} }),
 }))

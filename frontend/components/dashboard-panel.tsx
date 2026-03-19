@@ -82,7 +82,17 @@ interface DashboardPanelProps {
   showChat: boolean
 }
 
-function ChartVisualization({ data, fullHeight = false }: { data: ChartData; fullHeight?: boolean }) {
+function ChartVisualization({
+  data,
+  fullHeight = false,
+  selectedDataPoints = [],
+  onToggleDataPoint,
+}: {
+  data: ChartData
+  fullHeight?: boolean
+  selectedDataPoints?: Record<string, unknown>[]
+  onToggleDataPoint?: (dataPoint: Record<string, unknown>, isShift: boolean) => void
+}) {
   // Build chartConfig: prefer backend-provided chartConfig, fall back to series metadata
   const chartConfig: ChartConfig = {}
   if (data.chartConfig) {
@@ -130,11 +140,28 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
   const getColor = (key: string, index: number) =>
     chartConfig[key]?.color || `var(--chart-${(index % 5) + 1})`
 
+  const isRowSelected = (row: Record<string, unknown>) =>
+    selectedDataPoints.some((p) => JSON.stringify(p) === JSON.stringify(row))
+
+  const hasSel = selectedDataPoints.length > 0
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleChartClick = (chartData: any, e: any) => {
+    if (!onToggleDataPoint) return
+    const payload = chartData?.activePayload?.[0]?.payload
+    if (payload) onToggleDataPoint(payload as Record<string, unknown>, e?.shiftKey ?? false)
+  }
+
   const renderChart = () => {
     switch (data.chartType) {
       case 'line':
         return (
-          <LineChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <LineChart
+            data={data.data}
+            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            onClick={onToggleDataPoint ? handleChartClick : undefined}
+            style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+          >
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -155,14 +182,39 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
                 dataKey={key}
                 stroke={getColor(key, i)}
                 strokeWidth={2}
-                dot={{ fill: getColor(key, i), r: 3 }}
+                dot={onToggleDataPoint
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  ? (props: any) => {
+                      const { cx, cy, payload } = props
+                      const sel = isRowSelected(payload as Record<string, unknown>)
+                      return (
+                        <circle
+                          key={`dot-${cx}-${cy}`}
+                          cx={cx}
+                          cy={cy}
+                          r={sel ? 6 : 3}
+                          fill={getColor(key, i)}
+                          stroke={sel ? 'var(--foreground)' : getColor(key, i)}
+                          strokeWidth={sel ? 2.5 : 1}
+                          opacity={hasSel && !sel ? 0.25 : 1}
+                        />
+                      )
+                    }
+                  : { fill: getColor(key, i), r: 3 }
+                }
+                activeDot={{ r: 5 }}
               />
             ))}
           </LineChart>
         )
       case 'area':
         return (
-          <AreaChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <AreaChart
+            data={data.data}
+            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            onClick={onToggleDataPoint ? handleChartClick : undefined}
+            style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+          >
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -185,6 +237,27 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
                 fillOpacity={0.3}
                 stroke={getColor(key, i)}
                 strokeWidth={2}
+                dot={onToggleDataPoint
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  ? (props: any) => {
+                      const { cx, cy, payload } = props
+                      const sel = isRowSelected(payload as Record<string, unknown>)
+                      return (
+                        <circle
+                          key={`dot-${cx}-${cy}`}
+                          cx={cx}
+                          cy={cy}
+                          r={sel ? 6 : 3}
+                          fill={getColor(key, i)}
+                          stroke={sel ? 'var(--foreground)' : getColor(key, i)}
+                          strokeWidth={sel ? 2.5 : 1}
+                          opacity={hasSel && !sel ? 0.25 : 1}
+                        />
+                      )
+                    }
+                  : { fill: getColor(key, i), r: 3 }
+                }
+                activeDot={{ r: 5 }}
               />
             ))}
           </AreaChart>
@@ -209,9 +282,22 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               outerRadius="85%"
               strokeWidth={2}
             >
-              {pieData.map((entry, i) => (
-                <Cell key={i} fill={entry.fill as string} />
-              ))}
+              {pieData.map((entry, i) => {
+                const original = data.data[i]
+                const sel = isRowSelected(original as Record<string, unknown>)
+                return (
+                  <Cell
+                    key={i}
+                    fill={entry.fill as string}
+                    opacity={hasSel && !sel ? 0.25 : 1}
+                    stroke={sel ? 'var(--foreground)' : 'transparent'}
+                    strokeWidth={sel ? 2.5 : 0}
+                    style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={onToggleDataPoint ? (e: any) => onToggleDataPoint(original as Record<string, unknown>, e?.shiftKey ?? false) : undefined}
+                  />
+                )
+              })}
               <Label
                 content={({ viewBox }) => {
                   if (viewBox && "cx" in viewBox && "cy" in viewBox) {
@@ -235,7 +321,14 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
       }
       case 'radar':
         return (
-          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="85%">
+          <RadarChart
+            data={data.data}
+            cx="50%"
+            cy="50%"
+            outerRadius="85%"
+            onClick={onToggleDataPoint ? handleChartClick : undefined}
+            style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+          >
             <PolarGrid className="stroke-border" />
             <PolarAngleAxis
               dataKey={xAxisKey}
@@ -250,6 +343,26 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
                 fillOpacity={0.3}
                 stroke={getColor(key, i)}
                 strokeWidth={2}
+                dot={onToggleDataPoint
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  ? (props: any) => {
+                      const { cx, cy, payload } = props
+                      const sel = isRowSelected(payload as Record<string, unknown>)
+                      return (
+                        <circle
+                          key={`dot-${cx}-${cy}`}
+                          cx={cx}
+                          cy={cy}
+                          r={sel ? 6 : 3}
+                          fill={getColor(key, i)}
+                          stroke={sel ? 'var(--foreground)' : getColor(key, i)}
+                          strokeWidth={sel ? 2.5 : 1}
+                          opacity={hasSel && !sel ? 0.25 : 1}
+                        />
+                      )
+                    }
+                  : false
+                }
               />
             ))}
           </RadarChart>
@@ -273,9 +386,22 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               dataKey={valueKey}
               background
             >
-              {radialData.map((entry, i) => (
-                <Cell key={i} fill={entry.fill as string} />
-              ))}
+              {radialData.map((entry, i) => {
+                const original = data.data[i]
+                const sel = isRowSelected(original as Record<string, unknown>)
+                return (
+                  <Cell
+                    key={i}
+                    fill={entry.fill as string}
+                    opacity={hasSel && !sel ? 0.25 : 1}
+                    stroke={sel ? 'var(--foreground)' : 'transparent'}
+                    strokeWidth={sel ? 2.5 : 0}
+                    style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={onToggleDataPoint ? (e: any) => onToggleDataPoint(original as Record<string, unknown>, e?.shiftKey ?? false) : undefined}
+                  />
+                )
+              })}
             </RadialBar>
           </RadialBarChart>
         )
@@ -406,7 +532,12 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         const yDomain = [Math.floor(allMin - padding), Math.ceil(allMax + padding)]
 
         return (
-          <ComposedChart data={boxData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <ComposedChart
+            data={boxData}
+            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            onClick={onToggleDataPoint ? handleChartClick : undefined}
+            style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+          >
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -447,7 +578,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         )
       }
       case 'bar':
-      default:
+      default: {
         return (
           <BarChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -469,15 +600,32 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
                 dataKey={key}
                 fill={getColor(key, i)}
                 radius={[4, 4, 0, 0]}
-              />
+                style={onToggleDataPoint ? { cursor: 'pointer' } : undefined}
+                onClick={onToggleDataPoint ? (_rowData, index, e) => {
+                  // Use original data row by index — Recharts enriches rowData with extra fields
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  onToggleDataPoint(data.data[index] as Record<string, unknown>, (e as any).shiftKey ?? false)
+                } : undefined}
+              >
+                {onToggleDataPoint && data.data.map((row, idx) => (
+                  <Cell
+                    key={idx}
+                    fill={getColor(key, i)}
+                    opacity={selectedDataPoints.length === 0 || isRowSelected(row as Record<string, unknown>) ? 1 : 0.35}
+                    stroke={isRowSelected(row as Record<string, unknown>) ? 'var(--foreground)' : undefined}
+                    strokeWidth={isRowSelected(row as Record<string, unknown>) ? 1.5 : 0}
+                  />
+                ))}
+              </Bar>
             ))}
           </BarChart>
         )
+      }
     }
   }
 
   return (
-    <div className={cn('w-full h-full', fullHeight && 'h-100')}>
+    <div className={cn('w-full h-full', fullHeight && 'h-100')} onClick={(e) => e.stopPropagation()}>
       <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
         {renderChart()}
       </ChartContainer>
@@ -692,6 +840,9 @@ function DashboardWidgetCard({
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
   const isManual = isText || isParagraphs || isEmptyDiagram
 
+  const { selectedDataPoints, toggleDataPointSelection } = useChatStore()
+  const widgetSelectedPoints = selectedDataPoints[widget.id] ?? []
+
   // Measure header container width for dynamic font sizing
   const headerContainerRef = useRef<HTMLDivElement>(null)
   const [headerWidth, setHeaderWidth] = useState(0)
@@ -749,7 +900,13 @@ function DashboardWidgetCard({
     const { visualization } = widget
     switch (visualization.type) {
       case 'chart':
-        return <ChartVisualization data={visualization.data as ChartData} />
+        return (
+          <ChartVisualization
+            data={visualization.data as ChartData}
+            selectedDataPoints={widgetSelectedPoints}
+            onToggleDataPoint={(dp, isShift) => toggleDataPointSelection(widget.id, dp, isShift)}
+          />
+        )
       case 'table':
         return <TableVisualization data={visualization.data as TableData} />
       case 'cards':
@@ -916,10 +1073,11 @@ function FullscreenWidget({
   onClose: () => void
   onDownload: () => void
 }) {
-  const { sendUserMessage, setSelectedWidgets } = useChatStore()
+  const { sendUserMessage, setSelectedWidgets, selectedDataPoints, toggleDataPointSelection } = useChatStore()
   const [prompt, setPrompt] = useState('')
 
   if (!widget) return null
+  const widgetSelectedPoints = selectedDataPoints[widget.id] ?? []
 
   const handleSend = () => {
     if (!prompt.trim()) return
@@ -945,7 +1103,14 @@ function FullscreenWidget({
     const { visualization } = widget
     switch (visualization.type) {
       case 'chart':
-        return <ChartVisualization data={visualization.data as ChartData} fullHeight />
+        return (
+          <ChartVisualization
+            data={visualization.data as ChartData}
+            fullHeight
+            selectedDataPoints={widgetSelectedPoints}
+            onToggleDataPoint={(dp, isShift) => toggleDataPointSelection(widget.id, dp, isShift)}
+          />
+        )
       case 'table':
         return <TableVisualization data={visualization.data as TableData} fullHeight />
       case 'cards':
@@ -1112,7 +1277,7 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
 type FabDragType = 'text' | 'paragraphs' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
-  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement, selectedWidgetIds, toggleWidgetSelection, clearWidgetSelection, setSelectedWidgets } = useChatStore()
+  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement, selectedWidgetIds, toggleWidgetSelection, clearWidgetSelection, setSelectedWidgets, selectedDataPoints, clearAllDataPointSelections } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
@@ -1606,10 +1771,12 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             {dashboardWidgets.length} widget{dashboardWidgets.length !== 1 ? 's' : ''}
           </p>
         </div>
-        {selectedWidgetIds.length > 0 && (
+        {(selectedWidgetIds.length > 0 || Object.values(selectedDataPoints).some((pts) => pts.length > 0)) && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{selectedWidgetIds.length} selected</span>
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => clearWidgetSelection()}>
+            {selectedWidgetIds.length > 0 && (
+              <span className="text-xs text-muted-foreground">{selectedWidgetIds.length} selected</span>
+            )}
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { clearWidgetSelection(); clearAllDataPointSelections() }}>
               Clear
             </Button>
           </div>
@@ -1704,7 +1871,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                     className={cn(selectedWidgetIds.includes(widget.id) && 'ring-2 ring-primary ring-offset-1 ring-offset-background rounded-xl')}
                     onClick={(e) => {
                       if ((e.target as HTMLElement).closest('button, input, a, [role="button"]')) return
-                      toggleWidgetSelection(widget.id, e.shiftKey)
+                      if (e.shiftKey) toggleWidgetSelection(widget.id, true)
+                      else setSelectedWidgets([widget.id])
                     }}
                   >
                     <DashboardWidgetCard

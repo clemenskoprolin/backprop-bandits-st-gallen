@@ -578,6 +578,10 @@ class Agent:
             for w in self.dashboard_widgets:
                 selected_marker = " ⭐ SELECTED" if w.get('selected') else ""
                 desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)}){selected_marker}"
+                pts = w.get('selected_data_points', [])
+                if pts:
+                    import json as _json
+                    desc += f"\n  Selected data points: {_json.dumps(pts)}"
                 widget_descriptions.append(desc)
             selected_note = "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's question — focus analysis and modifications on these." if any(w.get('selected') for w in self.dashboard_widgets) else ""
             dashboard_context = f"""

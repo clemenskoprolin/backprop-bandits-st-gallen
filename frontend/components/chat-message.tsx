@@ -25,6 +25,7 @@ import {
   UserIcon,
   BarChart3Icon,
   DatabaseIcon,
+  FileTextIcon,
 } from 'lucide-react'
 import { Message } from '@/lib/types'
 import { submitFeedback } from '@/lib/api'
@@ -301,6 +302,23 @@ export function ChatMessage({
           isUser ? 'items-end' : 'items-start'
         )}
       >
+        {/* Attachments (user messages only) */}
+        {isUser && message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 justify-end">
+            {message.attachments.map((a) => (
+              <div
+                key={a.name}
+                className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <FileTextIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <span className="max-w-48 truncate font-medium">{a.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Main message bubble */}
         <div
           className={cn(

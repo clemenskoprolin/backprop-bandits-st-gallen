@@ -33,6 +33,7 @@ class DashboardWidgetContext(BaseModel):
     chart_type: str = ""
     position: dict[str, int] = Field(default_factory=dict)  # x, y, w, h
     selected: bool = False
+    selected_data_points: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
