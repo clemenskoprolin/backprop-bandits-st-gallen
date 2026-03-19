@@ -53,15 +53,27 @@ function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
     return 'large'
   }
 
-  return messages
-    .filter((m) => m.visualization && m.visualization.type !== 'none')
-    .map((m, index) => {
-      const size = getDefaultSize(m.visualization!.type)
+  const widgets: DashboardWidget[] = []
+
+  for (const m of messages) {
+    // Use the visualizations array if available, fall back to single visualization
+    const vizList = m.visualizations && m.visualizations.length > 0
+      ? m.visualizations
+      : m.visualization && m.visualization.type !== 'none'
+        ? [m.visualization]
+        : []
+
+    vizList.forEach((vis, vizIndex) => {
+      const index = widgets.length
+      const size = getDefaultSize(vis.type)
       const sizeConfig = WIDGET_SIZE_CONFIG[size]
-      return {
-        id: `widget_${m.message_id}`,
+      const widgetId = vizIndex === 0
+        ? `widget_${m.message_id}`
+        : `widget_${m.message_id}_viz${vizIndex + 1}`
+      widgets.push({
+        id: widgetId,
         messageId: m.message_id,
-        visualization: m.visualization!,
+        visualization: vis,
         size,
         layout: {
           x: (index % 2) * sizeConfig.w,
@@ -70,8 +82,11 @@ function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
           h: sizeConfig.h,
         },
         queryUsed: m.query_used,
-      }
+      })
     })
+  }
+
+  return widgets
 }
 
 /**
@@ -283,9 +298,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     let fullText = ''
     const thinkingSteps: string[] = []
     let visualization: Visualization | null = null
+    const allVisualizations: Visualization[] = []
     let queryUsed: string | null = null
     const followups: string[] = []
     let realSessionId: string | null = null
+    let vizCounter = 0
 
     // Create the placeholder assistant message for streaming
     const placeholderId = messageId
@@ -298,6 +315,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           role: 'assistant',
           content: fullText,
           visualization,
+          visualizations: allVisualizations.length > 0 ? [...allVisualizations] : undefined,
           query_used: queryUsed,
           timestamp: existing?.timestamp ?? new Date().toISOString(),
           thinking: thinkingSteps.length > 0 ? [...thinkingSteps] : undefined,
@@ -343,11 +361,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
         onVisualization: (vis) => {
           visualization = vis
+          allVisualizations.push(vis)
           updateAssistantMessage()
 
-          // Add widget to dashboard
+          // Add widget to dashboard with unique ID per visualization
           if (vis.type !== 'none') {
-            const widget = addVisualizationWidget(get(), vis, placeholderId, queryUsed)
+            vizCounter++
+            const widgetMessageId = vizCounter === 1 ? placeholderId : `${placeholderId}_viz${vizCounter}`
+            const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed)
             set((state) => ({
               dashboardWidgets: [...state.dashboardWidgets, widget],
             }))

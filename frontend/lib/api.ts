@@ -144,16 +144,24 @@ export async function fetchSession(
 ): Promise<{ session: Session; messages: Message[]; widgetLayouts: SavedWidgetLayout[] }> {
   const raw = await apiFetch<Record<string, unknown>>(`/api/sessions/${id}`)
 
-  const messages = ((raw.messages ?? []) as Record<string, unknown>[]).map((m) => ({
-    message_id: m.message_id as string,
-    role: m.role as 'user' | 'assistant',
-    content: normalizeContent(m.content),
-    visualization: m.visualization ? normalizeVisualization(m.visualization) : undefined,
-    query_used: (m.query_used as string | null) ?? undefined,
-    timestamp: (m.timestamp as string) ?? new Date().toISOString(),
-    thinking: m.thinking as string[] | undefined,
-    followups: m.followups as string[] | undefined,
-  }))
+  const messages = ((raw.messages ?? []) as Record<string, unknown>[]).map((m) => {
+    const rawVizList = (m.visualizations ?? []) as unknown[]
+    const visualizations = rawVizList
+      .map((v) => normalizeVisualization(v))
+      .filter((v): v is Visualization => v !== null)
+
+    return {
+      message_id: m.message_id as string,
+      role: m.role as 'user' | 'assistant',
+      content: normalizeContent(m.content),
+      visualization: m.visualization ? normalizeVisualization(m.visualization) : undefined,
+      visualizations: visualizations.length > 0 ? visualizations : undefined,
+      query_used: (m.query_used as string | null) ?? undefined,
+      timestamp: (m.timestamp as string) ?? new Date().toISOString(),
+      thinking: m.thinking as string[] | undefined,
+      followups: m.followups as string[] | undefined,
+    }
+  })
 
   const session: Session = {
     session_id: raw.session_id as string,

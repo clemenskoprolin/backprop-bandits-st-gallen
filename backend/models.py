@@ -51,6 +51,7 @@ class Message(BaseModel):
     role: Literal["user", "assistant"]
     content: Union[str,list]
     visualization: VisualizationBlock | None = None
+    visualizations: list[dict[str, Any]] = Field(default_factory=list)
     query_used: str | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

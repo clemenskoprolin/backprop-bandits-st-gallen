@@ -10,6 +10,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   visualization?: Visualization | null
+  visualizations?: Visualization[]
   query_used?: string | null
   timestamp: string
   thinking?: string[]

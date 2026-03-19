@@ -108,6 +108,7 @@ async def chat_stream(req: ChatRequest):
             
             full_text = ""
             visualization = None
+            visualizations = []
             followups = []
             thinking = []
             
@@ -160,6 +161,7 @@ async def chat_stream(req: ChatRequest):
                                     "chartConfig": chart_config,
                                 },
                             }
+                            visualizations.append(visualization)
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
                             print("Visualization rendering error:", e)
@@ -180,6 +182,7 @@ async def chat_stream(req: ChatRequest):
                     role="assistant",
                     content=full_text,
                     visualization=visualization,
+                    visualizations=visualizations,
                     query_used=None,
                 )
             )
