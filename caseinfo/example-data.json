@@ -72,3 +72,24 @@
     "Cross-section after break": 0
   }
 }
+
+{
+  "_id": {
+    "$oid": "69b04a53df0316ab9612e11a"
+  },
+  "fileId": "69a18e51467aa52ae03afe9d",
+  "filename": "%7B80A0F677-89BE-46e2-9F16-59409E96D8B6%7D-2.1772195394.0-%7B778AB883-C25D-448b-B1A2-3808046340ED%7D-Zwick.Unittable.ForcePerTiter.%7B778AB883-C25D-448b-B1A2-3808046340ED%7D-Zwick.Unittable.ForcePerTiter_Value",
+  "uploadDate": {
+    "$date": "2026-02-27T12:30:09.627Z"
+  },
+  "bufferLength": 8,
+  "values": [
+    196970697911.446
+  ],
+  "valuesCount": 1,
+  "metadata": {
+    "refId": "{80A0F677-89BE-46e2-9F16-59409E96D8B6}",
+    "rootVersion": "2.1772195394.0",
+    "childId": "{778AB883-C25D-448b-B1A2-3808046340ED}-Zwick.Unittable.ForcePerTiter.{778AB883-C25D-448b-B1A2-3808046340ED}-Zwick.Unittable.ForcePerTiter_Value"
+  }
+}
