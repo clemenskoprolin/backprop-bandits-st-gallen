@@ -14,6 +14,7 @@ import {
   GripVerticalIcon,
   BarChart2Icon,
   TypeIcon,
+  AlignLeftIcon,
   PlusIcon,
   FileTextIcon,
   SendHorizontalIcon,
@@ -44,8 +45,10 @@ import {
   Rectangle,
   type RectangleProps,
 } from 'recharts'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useChatStore } from '@/lib/chat-store'
-import { DashboardWidget, ChartData, TableData, CardsData, TextData, Visualization } from '@/lib/types'
+import { DashboardWidget, ChartData, TableData, CardsData, TextData, ParagraphsData, Visualization } from '@/lib/types'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -131,7 +134,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
     switch (data.chartType) {
       case 'line':
         return (
-          <LineChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <LineChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -159,7 +162,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         )
       case 'area':
         return (
-          <AreaChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <AreaChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -202,8 +205,8 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               nameKey={xAxisKey}
               cx="50%"
               cy="50%"
-              innerRadius="40%"
-              outerRadius="70%"
+              innerRadius="35%"
+              outerRadius="85%"
               strokeWidth={2}
             >
               {pieData.map((entry, i) => (
@@ -232,7 +235,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
       }
       case 'radar':
         return (
-          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="70%">
+          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="85%">
             <PolarGrid className="stroke-border" />
             <PolarAngleAxis
               dataKey={xAxisKey}
@@ -403,7 +406,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         const yDomain = [Math.floor(allMin - padding), Math.ceil(allMax + padding)]
 
         return (
-          <ComposedChart data={boxData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <ComposedChart data={boxData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -446,7 +449,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
       case 'bar':
       default:
         return (
-          <BarChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <BarChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -474,8 +477,8 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
   }
 
   return (
-    <div className={cn('w-full', fullHeight ? 'h-[400px]' : 'h-full min-h-[120px]')}>
-      <ChartContainer config={chartConfig} className="h-full w-full">
+    <div className={cn('w-full h-full', fullHeight && 'h-100')}>
+      <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
         {renderChart()}
       </ChartContainer>
     </div>
@@ -539,6 +542,39 @@ function CardsVisualization({ data }: { data: CardsData }) {
           <p className="mt-1 text-xl font-bold text-foreground">{card.value}</p>
         </div>
       ))}
+    </div>
+  )
+}
+
+function ParagraphsVisualization({ data, editing, draft, onDraftChange, onCommit, onStartEdit }: {
+  data: ParagraphsData
+  editing: boolean
+  draft: string
+  onDraftChange: (v: string) => void
+  onCommit: () => void
+  onStartEdit: () => void
+}) {
+  if (editing) {
+    return (
+      <textarea
+        className="w-full h-full resize-none bg-transparent border-0 outline-none focus:ring-0 p-0 text-sm leading-relaxed text-foreground font-sans"
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        onBlur={onCommit}
+        onKeyDown={(e) => { if (e.key === 'Escape') onCommit() }}
+        autoFocus
+        placeholder="Write your text here (Markdown supported)…"
+      />
+    )
+  }
+  return (
+    <div
+      className="w-full h-full overflow-auto cursor-text text-sm text-foreground [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mb-1 [&_p]:mb-2 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2 [&_li]:mb-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:rounded [&_pre]:text-xs [&_pre]:font-mono [&_pre]:overflow-x-auto [&_pre]:mb-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_blockquote]:mb-2 [&_a]:text-primary [&_a]:underline"
+      onClick={onStartEdit}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {data.content || '*Click to edit…*'}
+      </ReactMarkdown>
     </div>
   )
 }
@@ -652,8 +688,9 @@ function DashboardWidgetCard({
   isWorking?: boolean
 }) {
   const isText = widget.visualization.type === 'text'
+  const isParagraphs = widget.visualization.type === 'paragraphs'
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
-  const isManual = isText || isEmptyDiagram
+  const isManual = isText || isParagraphs || isEmptyDiagram
 
   // Measure header container width for dynamic font sizing
   const headerContainerRef = useRef<HTMLDivElement>(null)
@@ -667,20 +704,44 @@ function DashboardWidgetCard({
     return () => obs.disconnect()
   }, [isText])
 
-  // Editable headline state for text widgets
+  // Editable title state for text / paragraphs widgets
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(
-    isText ? (widget.visualization.data as TextData)?.title ?? '' : ''
+    isText
+      ? (widget.visualization.data as TextData)?.title ?? ''
+      : isParagraphs
+      ? (widget.visualization.data as ParagraphsData)?.title ?? ''
+      : ''
   )
   // Sync draft if external data changes
   useEffect(() => {
     if (isText) setTitleDraft((widget.visualization.data as TextData)?.title ?? '')
-  }, [(widget.visualization.data as TextData)?.title]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (isParagraphs) setTitleDraft((widget.visualization.data as ParagraphsData)?.title ?? '')
+  }, [(widget.visualization.data as TextData | ParagraphsData)?.title]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commitTitle = () => {
     setEditingTitle(false)
     if (isText && onUpdateVisualizationData) {
       onUpdateVisualizationData({ ...(widget.visualization.data as TextData), title: titleDraft })
+    }
+    if (isParagraphs && onUpdateVisualizationData) {
+      onUpdateVisualizationData({ ...(widget.visualization.data as ParagraphsData), title: titleDraft })
+    }
+  }
+
+  // Editable content state for paragraphs widgets
+  const [editingContent, setEditingContent] = useState(false)
+  const [contentDraft, setContentDraft] = useState(
+    isParagraphs ? (widget.visualization.data as ParagraphsData)?.content ?? '' : ''
+  )
+  useEffect(() => {
+    if (isParagraphs) setContentDraft((widget.visualization.data as ParagraphsData)?.content ?? '')
+  }, [(widget.visualization.data as ParagraphsData)?.content]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitContent = () => {
+    setEditingContent(false)
+    if (isParagraphs && onUpdateVisualizationData) {
+      onUpdateVisualizationData({ ...(widget.visualization.data as ParagraphsData), content: contentDraft })
     }
   }
 
@@ -696,6 +757,17 @@ function DashboardWidgetCard({
       case 'text':
         // Text widget is headline-only — body is intentionally empty
         return null
+      case 'paragraphs':
+        return (
+          <ParagraphsVisualization
+            data={visualization.data as ParagraphsData}
+            editing={editingContent}
+            draft={contentDraft}
+            onDraftChange={setContentDraft}
+            onCommit={commitContent}
+            onStartEdit={() => { setContentDraft((widget.visualization.data as ParagraphsData)?.content ?? ''); setEditingContent(true) }}
+          />
+        )
       case 'empty-diagram':
         return (
           <EmptyDiagramVisualization
@@ -714,6 +786,7 @@ function DashboardWidgetCard({
     if (visualization.type === 'table') return (visualization.data as TableData).title
     if (visualization.type === 'cards') return (visualization.data as CardsData).title
     if (visualization.type === 'text') return (widget.visualization.data as TextData)?.title || 'Headline'
+    if (visualization.type === 'paragraphs') return (widget.visualization.data as ParagraphsData)?.title || 'Paragraphs'
     if (visualization.type === 'empty-diagram') return 'New Chart'
     return 'Visualization'
   }
@@ -757,6 +830,26 @@ function DashboardWidgetCard({
                   {getTitle()}
                 </span>
                 <PencilIcon className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            )
+          ) : isParagraphs ? (
+            /* Paragraphs widget — compact editable title */
+            editingTitle ? (
+              <input
+                className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 p-0 text-sm font-medium leading-tight"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') commitTitle() }}
+                autoFocus
+              />
+            ) : (
+              <div
+                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer overflow-hidden"
+                onClick={() => { setTitleDraft(getTitle()); setEditingTitle(true) }}
+              >
+                <span className="text-sm font-medium truncate text-foreground">{getTitle()}</span>
+                <PencilIcon className="h-3 w-3 text-muted-foreground/40 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             )
           ) : (
@@ -803,7 +896,7 @@ function DashboardWidgetCard({
         </div>
       </CardHeader>
       {!isText && (
-        <CardContent className="flex-1 min-h-0 overflow-hidden p-2">
+        <CardContent className={cn('flex-1 min-h-0 overflow-hidden', isParagraphs ? 'p-3' : 'p-1 pb-1.5')}>
           {renderVisualization()}
         </CardContent>
       )}
@@ -1016,7 +1109,7 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
   return placements
 }
 
-type FabDragType = 'text' | 'empty-diagram'
+type FabDragType = 'text' | 'paragraphs' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
   const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement, selectedWidgetIds, toggleWidgetSelection, clearWidgetSelection, setSelectedWidgets } = useChatStore()
@@ -1351,7 +1444,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           const relY = e.clientY - rect.top + scrollTop - 16
 
           const c = colsRef.current
-          const iw = type === 'empty-diagram' ? 2 : 1
+          const iw = type === 'empty-diagram' || type === 'paragraphs' ? 2 : 1
 
           let gx = Math.max(0, Math.min(c - iw, Math.round(relX / (COLUMN_WIDTH + GRID_GAP))))
           let gy = Math.max(0, snapToRow(relY, rowHeightsRef.current))
@@ -1399,6 +1492,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
     if (type === 'text') {
       visualization = { type: 'text', data: { title: 'Headline', content: '' } }
+    } else if (type === 'paragraphs') {
+      visualization = { type: 'paragraphs', data: { title: 'Paragraphs', content: '' } }
     } else {
       visualization = { type: 'empty-diagram', data: {} }
     }
@@ -1677,6 +1772,14 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             <BarChart2Icon className="h-4 w-4 text-muted-foreground" />
             New Chart
           </button>
+          {/* Paragraphs card */}
+          <button
+            className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
+            onPointerDown={(e) => handleFabItemDragStart('paragraphs', e)}
+          >
+            <AlignLeftIcon className="h-4 w-4 text-muted-foreground" />
+            Paragraphs
+          </button>
           {/* Headline text card */}
           <button
             className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
@@ -1716,6 +1819,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         >
           {fabDragVisual.type === 'empty-diagram'
             ? <><BarChart2Icon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Chart</span></>
+            : fabDragVisual.type === 'paragraphs'
+            ? <><AlignLeftIcon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Paragraphs</span></>
             : <><TypeIcon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Text</span></>
           }
         </div>
