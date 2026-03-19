@@ -481,7 +481,7 @@ async def shutdown_mcp_client():
     mcp_client = None
 
 
-# system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
+# system_prompt = """You are CoMat, an AI material testing assistant with MongoDB database access.
 
 # AVAILABLE TOOLS:
 
@@ -553,7 +553,7 @@ async def shutdown_mcp_client():
 # - escalate: query is too complex, needs deeper analysis
 # """
 
-# visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
+# visualizer_system_prompt = """You are CoMat, an AI material testing assistant.
 # You should inspect if the previous results would benefit from a visualization. If you want to visualize
 # use the render_visualization function to visualize the data. If not, still call the function with none values."""
 
@@ -865,8 +865,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
             + similar_data
         )
 
-        visualizer_system_prompt = (
-            """You are Backprop Bandits, an AI material testing assistant.
+        visualizer_system_prompt = """You are CoMat, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
         use the render_visualization function to visualize the data. Visualize if possible!
         Render a chart on the user's dashboard.

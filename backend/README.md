@@ -1,4 +1,4 @@
-# Backprop Bandits - Backend Setup
+# CoMat - Backend Setup
 
 ## Prerequisites
 

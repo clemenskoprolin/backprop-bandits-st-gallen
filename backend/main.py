@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     print("MongoDB MCP client shutdown")
 
 
-app = FastAPI(title="Backprop Bandits — Material Testing AI", lifespan=lifespan)
+app = FastAPI(title="CoMat — Material Testing AI", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

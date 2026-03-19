@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'MatTest AI - Material Testing Analysis',
+  title: 'CoMat AI - Material Testing Analysis',
   description: 'AI-powered assistant for material testing engineers. Analyze test data, discover trends, and get insights in natural language.',
   generator: 'v0.app',
   icons: {

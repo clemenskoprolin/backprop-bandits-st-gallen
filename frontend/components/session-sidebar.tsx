@@ -108,7 +108,7 @@ export function SessionSidebar() {
             <FlaskConicalIcon className="h-4 w-4 text-primary-foreground" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-foreground">MatTest AI</span>
+            <span className="text-sm font-semibold text-foreground">CoMat AI</span>
             <span className="text-xs text-muted-foreground">Material Analysis</span>
           </div>
         </div>
