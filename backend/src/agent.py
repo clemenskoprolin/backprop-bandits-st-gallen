@@ -821,8 +821,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
         """ + similar_data + dashboard_context
 
-        output_system_prompt = (
-            """You are a material testing AI assistant.
+        output_system_prompt = """You are a material testing AI assistant.
 
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
