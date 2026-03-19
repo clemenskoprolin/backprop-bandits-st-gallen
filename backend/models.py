@@ -32,6 +32,7 @@ class DashboardWidgetContext(BaseModel):
     title: str = ""
     chart_type: str = ""
     position: dict[str, int] = Field(default_factory=dict)  # x, y, w, h
+    selected: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -72,6 +73,7 @@ class WidgetLayout(BaseModel):
     x: int = 0
     y: int = 0
     w: int = 1
+    visualization_data: dict | None = None  # stored for manual widgets (text, etc.)
 
 
 class Session(BaseModel):

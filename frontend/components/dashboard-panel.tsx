@@ -14,6 +14,7 @@ import {
   GripVerticalIcon,
   BarChart2Icon,
   TypeIcon,
+  AlignLeftIcon,
   PlusIcon,
   FileTextIcon,
   SendHorizontalIcon,
@@ -44,8 +45,10 @@ import {
   Rectangle,
   type RectangleProps,
 } from 'recharts'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useChatStore } from '@/lib/chat-store'
-import { DashboardWidget, ChartData, TableData, CardsData, TextData, Visualization } from '@/lib/types'
+import { DashboardWidget, ChartData, TableData, CardsData, TextData, ParagraphsData, Visualization } from '@/lib/types'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -131,7 +134,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
     switch (data.chartType) {
       case 'line':
         return (
-          <LineChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <LineChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -159,7 +162,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         )
       case 'area':
         return (
-          <AreaChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <AreaChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -202,8 +205,8 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               nameKey={xAxisKey}
               cx="50%"
               cy="50%"
-              innerRadius="40%"
-              outerRadius="70%"
+              innerRadius="35%"
+              outerRadius="85%"
               strokeWidth={2}
             >
               {pieData.map((entry, i) => (
@@ -232,7 +235,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
       }
       case 'radar':
         return (
-          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="70%">
+          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="85%">
             <PolarGrid className="stroke-border" />
             <PolarAngleAxis
               dataKey={xAxisKey}
@@ -403,7 +406,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
         const yDomain = [Math.floor(allMin - padding), Math.ceil(allMax + padding)]
 
         return (
-          <ComposedChart data={boxData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <ComposedChart data={boxData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -446,7 +449,7 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
       case 'bar':
       default:
         return (
-          <BarChart data={data.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <BarChart data={data.data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis
               dataKey={xAxisKey}
@@ -474,8 +477,8 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
   }
 
   return (
-    <div className={cn('w-full', fullHeight ? 'h-[400px]' : 'h-full min-h-[120px]')}>
-      <ChartContainer config={chartConfig} className="h-full w-full">
+    <div className={cn('w-full h-full', fullHeight && 'h-100')}>
+      <ChartContainer config={chartConfig} className="h-full w-full aspect-auto">
         {renderChart()}
       </ChartContainer>
     </div>
@@ -543,11 +546,58 @@ function CardsVisualization({ data }: { data: CardsData }) {
   )
 }
 
+function ParagraphsVisualization({ data, editing, draft, onDraftChange, onCommit, onStartEdit }: {
+  data: ParagraphsData
+  editing: boolean
+  draft: string
+  onDraftChange: (v: string) => void
+  onCommit: () => void
+  onStartEdit: () => void
+}) {
+  if (editing) {
+    return (
+      <textarea
+        className="w-full h-full resize-none bg-transparent border-0 outline-none focus:ring-0 p-0 text-sm leading-relaxed text-foreground font-sans"
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        onBlur={onCommit}
+        onKeyDown={(e) => { if (e.key === 'Escape') onCommit() }}
+        autoFocus
+        placeholder="Write your text here (Markdown supported)…"
+      />
+    )
+  }
+  return (
+    <div
+      className="w-full h-full overflow-auto cursor-text text-sm text-foreground [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mb-1 [&_p]:mb-2 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2 [&_li]:mb-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:rounded [&_pre]:text-xs [&_pre]:font-mono [&_pre]:overflow-x-auto [&_pre]:mb-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_blockquote]:mb-2 [&_a]:text-primary [&_a]:underline"
+      onClick={onStartEdit}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {data.content || '*Click to edit…*'}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 function EmptyDiagramVisualization({
   onClick,
+  isWorking = false,
 }: {
   onClick: () => void
+  isWorking?: boolean
 }) {
+  if (isWorking) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center gap-3 px-4">
+        <div className="rounded-full bg-muted p-3 animate-pulse">
+          <BarChart2Icon className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <p className="text-xs text-muted-foreground text-center leading-snug animate-pulse">
+          Working…
+        </p>
+      </div>
+    )
+  }
   return (
     <button
       className="h-full w-full flex flex-col items-center justify-center gap-3 px-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-md"
@@ -625,6 +675,7 @@ function DashboardWidgetCard({
   onDragHandleDown,
   onUpdateVisualizationData,
   onOpenEmptyDiagramDialog,
+  isWorking = false,
 }: {
   widget: DashboardWidget
   isNew?: boolean
@@ -634,25 +685,63 @@ function DashboardWidgetCard({
   onDragHandleDown?: (e: React.PointerEvent) => void
   onUpdateVisualizationData?: (data: Visualization['data']) => void
   onOpenEmptyDiagramDialog?: () => void
+  isWorking?: boolean
 }) {
   const isText = widget.visualization.type === 'text'
+  const isParagraphs = widget.visualization.type === 'paragraphs'
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
-  const isManual = isText || isEmptyDiagram
+  const isManual = isText || isParagraphs || isEmptyDiagram
 
-  // Editable headline state for text widgets
+  // Measure header container width for dynamic font sizing
+  const headerContainerRef = useRef<HTMLDivElement>(null)
+  const [headerWidth, setHeaderWidth] = useState(0)
+  useEffect(() => {
+    if (!isText) return
+    const el = headerContainerRef.current
+    if (!el) return
+    const obs = new ResizeObserver(([entry]) => setHeaderWidth(entry.contentRect.width))
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [isText])
+
+  // Editable title state for text / paragraphs widgets
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(
-    isText ? (widget.visualization.data as TextData)?.title ?? '' : ''
+    isText
+      ? (widget.visualization.data as TextData)?.title ?? ''
+      : isParagraphs
+      ? (widget.visualization.data as ParagraphsData)?.title ?? ''
+      : ''
   )
   // Sync draft if external data changes
   useEffect(() => {
     if (isText) setTitleDraft((widget.visualization.data as TextData)?.title ?? '')
-  }, [(widget.visualization.data as TextData)?.title]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (isParagraphs) setTitleDraft((widget.visualization.data as ParagraphsData)?.title ?? '')
+  }, [(widget.visualization.data as TextData | ParagraphsData)?.title]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commitTitle = () => {
     setEditingTitle(false)
     if (isText && onUpdateVisualizationData) {
       onUpdateVisualizationData({ ...(widget.visualization.data as TextData), title: titleDraft })
+    }
+    if (isParagraphs && onUpdateVisualizationData) {
+      onUpdateVisualizationData({ ...(widget.visualization.data as ParagraphsData), title: titleDraft })
+    }
+  }
+
+  // Editable content state for paragraphs widgets
+  const [editingContent, setEditingContent] = useState(false)
+  const [contentDraft, setContentDraft] = useState(
+    isParagraphs ? (widget.visualization.data as ParagraphsData)?.content ?? '' : ''
+  )
+  useEffect(() => {
+    if (isParagraphs) setContentDraft((widget.visualization.data as ParagraphsData)?.content ?? '')
+  }, [(widget.visualization.data as ParagraphsData)?.content]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitContent = () => {
+    setEditingContent(false)
+    if (isParagraphs && onUpdateVisualizationData) {
+      onUpdateVisualizationData({ ...(widget.visualization.data as ParagraphsData), content: contentDraft })
     }
   }
 
@@ -668,10 +757,22 @@ function DashboardWidgetCard({
       case 'text':
         // Text widget is headline-only — body is intentionally empty
         return null
+      case 'paragraphs':
+        return (
+          <ParagraphsVisualization
+            data={visualization.data as ParagraphsData}
+            editing={editingContent}
+            draft={contentDraft}
+            onDraftChange={setContentDraft}
+            onCommit={commitContent}
+            onStartEdit={() => { setContentDraft((widget.visualization.data as ParagraphsData)?.content ?? ''); setEditingContent(true) }}
+          />
+        )
       case 'empty-diagram':
         return (
           <EmptyDiagramVisualization
             onClick={() => onOpenEmptyDiagramDialog?.()}
+            isWorking={isWorking}
           />
         )
       default:
@@ -685,14 +786,22 @@ function DashboardWidgetCard({
     if (visualization.type === 'table') return (visualization.data as TableData).title
     if (visualization.type === 'cards') return (visualization.data as CardsData).title
     if (visualization.type === 'text') return (widget.visualization.data as TextData)?.title || 'Headline'
+    if (visualization.type === 'paragraphs') return (widget.visualization.data as ParagraphsData)?.title || 'Paragraphs'
     if (visualization.type === 'empty-diagram') return 'New Chart'
     return 'Visualization'
   }
 
+  // Dynamic font size for text widgets: shrinks to fit, min 12px, then truncates
+  // Use live titleDraft while editing so font updates as the user types
+  const textTitle = isText ? (editingTitle ? titleDraft : getTitle()) : ''
+  const dynamicFontSize = isText && headerWidth > 0
+    ? Math.max(12, Math.min(28, (headerWidth - 80) / Math.max(textTitle.length, 1) * 1.8))
+    : 28
+
   return (
     <Card className={`h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none group ${isNew ? 'ring-2 ring-primary/60 animate-pulse' : ''}`}>
       <CardHeader className={cn('shrink-0 border-b border-border/30', isText ? 'py-2 px-2 flex-1' : isManual ? 'py-1 px-2' : 'py-1.5 px-3')}>
-        <div className={cn('flex items-center gap-1.5 overflow-hidden', isText && 'h-full')}>
+        <div ref={headerContainerRef} className={cn('flex items-center gap-1.5 overflow-hidden', isText && 'h-full')}>
           <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-0.5 rounded hover:bg-muted transition-colors shrink-0" onPointerDown={onDragHandleDown}>
             <GripVerticalIcon className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
@@ -702,7 +811,7 @@ function DashboardWidgetCard({
             editingTitle ? (
               <input
                 className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 p-0 font-bold leading-tight"
-                style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                style={{ fontSize: `${dynamicFontSize}px`, transition: 'font-size 100ms ease' }}
                 value={titleDraft}
                 onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={commitTitle}
@@ -711,16 +820,36 @@ function DashboardWidgetCard({
               />
             ) : (
               <div
-                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer"
+                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer overflow-hidden"
                 onClick={() => { setTitleDraft(getTitle()); setEditingTitle(true) }}
               >
                 <span
                   className="font-bold leading-tight truncate text-foreground"
-                  style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                  style={{ fontSize: `${dynamicFontSize}px`, transition: 'font-size 100ms ease' }}
                 >
                   {getTitle()}
                 </span>
                 <PencilIcon className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            )
+          ) : isParagraphs ? (
+            /* Paragraphs widget — compact editable title */
+            editingTitle ? (
+              <input
+                className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 p-0 text-sm font-medium leading-tight"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') commitTitle() }}
+                autoFocus
+              />
+            ) : (
+              <div
+                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer overflow-hidden"
+                onClick={() => { setTitleDraft(getTitle()); setEditingTitle(true) }}
+              >
+                <span className="text-sm font-medium truncate text-foreground">{getTitle()}</span>
+                <PencilIcon className="h-3 w-3 text-muted-foreground/40 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             )
           ) : (
@@ -767,7 +896,7 @@ function DashboardWidgetCard({
         </div>
       </CardHeader>
       {!isText && (
-        <CardContent className="flex-1 min-h-0 overflow-hidden p-2">
+        <CardContent className={cn('flex-1 min-h-0 overflow-hidden', isParagraphs ? 'p-3' : 'p-1 pb-1.5')}>
           {renderVisualization()}
         </CardContent>
       )}
@@ -787,7 +916,18 @@ function FullscreenWidget({
   onClose: () => void
   onDownload: () => void
 }) {
+  const { sendUserMessage, setSelectedWidgets } = useChatStore()
+  const [prompt, setPrompt] = useState('')
+
   if (!widget) return null
+
+  const handleSend = () => {
+    if (!prompt.trim()) return
+    setSelectedWidgets([widget.id])
+    sendUserMessage(prompt.trim())
+    setPrompt('')
+    onClose()
+  }
 
   const getTitle = () => {
     const { visualization } = widget
@@ -838,6 +978,24 @@ function FullscreenWidget({
             </pre>
           </div>
         )}
+        <div className="border-t pt-3">
+          <div className="flex gap-2 items-center">
+            <div className="flex-1 relative">
+              <input
+                className="w-full rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary pr-10"
+                placeholder="Ask something about this chart…"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleSend() }}
+                autoFocus
+              />
+            </div>
+            <Button size="sm" onClick={handleSend} disabled={!prompt.trim()} className="shrink-0">
+              Ask
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5">This chart will be set as context for your question.</p>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -850,13 +1008,51 @@ const ROW_HEIGHT = 240
 const HEADLINE_ROW_HEIGHT = 80 // Compact height for headline (text) widgets
 
 const toPixelX = (gx: number) => gx * (COLUMN_WIDTH + GRID_GAP)
-const toPixelY = (gy: number) => gy * (ROW_HEIGHT + GRID_GAP)
 const toPixelH = (gh: number) => gh * ROW_HEIGHT + (gh - 1) * GRID_GAP
 const itemWidth = (w: number) => w * COLUMN_WIDTH + (w - 1) * GRID_GAP
 
 function getWidgetPixelHeight(widget: DashboardWidget, displayH: number): number {
   if (widget.visualization.type === 'text') return HEADLINE_ROW_HEIGHT
   return toPixelH(displayH)
+}
+
+/** Returns the pixel height of each occupied grid row (row index → px height). */
+function computeRowHeights(
+  widgets: DashboardWidget[],
+  placements: Map<string, { id: string; x: number; y: number; w: number; h: number }>,
+): Map<number, number> {
+  const rowHeights = new Map<number, number>()
+  for (const widget of widgets) {
+    const p = placements.get(widget.id)
+    if (!p) continue
+    const rowPixH = widget.visualization.type === 'text' ? HEADLINE_ROW_HEIGHT : ROW_HEIGHT
+    for (let row = p.y; row < p.y + p.h; row++) {
+      rowHeights.set(row, Math.max(rowHeights.get(row) ?? 0, rowPixH))
+    }
+  }
+  return rowHeights
+}
+
+/** Cumulative pixel Y for a grid row using variable row heights. */
+function pixelYFromRows(gy: number, rowHeights: Map<number, number>): number {
+  let y = 0
+  for (let row = 0; row < gy; row++) {
+    y += (rowHeights.get(row) ?? ROW_HEIGHT) + GRID_GAP
+  }
+  return y
+}
+
+/** Snap a pixel Y coordinate to the nearest grid row start. */
+function snapToRow(py: number, rowHeights: Map<number, number>): number {
+  let accumulated = 0
+  let best = 0
+  let bestDist = Math.abs(py)
+  for (let row = 0; row <= 100; row++) {
+    const dist = Math.abs(py - accumulated)
+    if (dist < bestDist) { bestDist = dist; best = row }
+    accumulated += (rowHeights.get(row) ?? ROW_HEIGHT) + GRID_GAP
+  }
+  return best
 }
 
 /**
@@ -913,10 +1109,10 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
   return placements
 }
 
-type FabDragType = 'text' | 'empty-diagram'
+type FabDragType = 'text' | 'paragraphs' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
-  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage } = useChatStore()
+  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement, selectedWidgetIds, toggleWidgetSelection, clearWidgetSelection, setSelectedWidgets } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
@@ -929,24 +1125,23 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     if (!gridRef.current || dashboardWidgets.length === 0) return
     setIsExporting(true)
     try {
-      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import('html2canvas'),
+      const [{ toPng }, { default: jsPDF }] = await Promise.all([
+        import('html-to-image'),
         import('jspdf'),
       ])
-      const canvas = await html2canvas(gridRef.current, {
+      const imgData = await toPng(gridRef.current, {
         backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-        logging: false,
+        pixelRatio: 2,
       })
-      const imgData = canvas.toDataURL('image/png')
-      // A4 dimensions in mm
+      // A4 dimensions in mm — get image natural size from data URL
+      const imgEl = new Image()
+      await new Promise<void>((res) => { imgEl.onload = () => res(); imgEl.src = imgData })
       const pageW = 210
       const pageH = 297
       const margin = 10
       const usableW = pageW - margin * 2
       const usableH = pageH - margin * 2
-      const canvasAspect = canvas.width / canvas.height
+      const canvasAspect = imgEl.naturalWidth / imgEl.naturalHeight
       let imgW = usableW
       let imgH = usableW / canvasAspect
       // If taller than page, scale down
@@ -994,6 +1189,9 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   } | null>(null)
   const [fabOpen, setFabOpen] = useState(false)
   const [fabDragVisual, setFabDragVisual] = useState<{ type: FabDragType; x: number; y: number } | null>(null)
+  const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const selectionBoxRef = useRef<{ startX: number; startY: number; scrollTop: number } | null>(null)
+  const selectionBoxValueRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
 
   // Stable ref wrappers for store actions (Zustand actions are stable, but refs are safer in effects)
   const addWidgetRef = useRef(addWidget)
@@ -1020,11 +1218,20 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
   colsRef.current = cols
 
-  // Compute responsive positions: clamp widths + reflow
-  const layoutMap = useMemo(() => {
+  // Compute responsive positions: clamp widths + reflow + variable row heights
+  const { layoutMap, rowHeights } = useMemo(() => {
     const placements = reflowLayout(dashboardWidgets, cols)
-    return new Map(placements.map((p) => [p.id, p]))
+    const map = new Map(placements.map((p) => [p.id, p]))
+    const rh = computeRowHeights(dashboardWidgets, map)
+    return { layoutMap: map, rowHeights: rh }
   }, [dashboardWidgets, cols])
+
+  const rowHeightsRef = useRef<Map<number, number>>(rowHeights)
+  rowHeightsRef.current = rowHeights
+  const layoutMapRef = useRef(layoutMap)
+  layoutMapRef.current = layoutMap
+  const setSelectedWidgetsRef = useRef(setSelectedWidgets)
+  setSelectedWidgetsRef.current = setSelectedWidgets
 
   // ── Drag handle ──
   const handleDragHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
@@ -1033,7 +1240,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     if (!widget) return
     const placement = layoutMap.get(widgetId)
     const px = toPixelX(placement?.x ?? widget.layout.x)
-    const py = toPixelY(placement?.y ?? widget.layout.y)
+    const py = pixelYFromRows(placement?.y ?? widget.layout.y, rowHeightsRef.current)
     dragRef.current = {
       widgetId,
       startPointerX: e.clientX,
@@ -1075,7 +1282,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
         const c = colsRef.current
         const dw = itemWidth(Math.min(dragged.layout.w, c))
-        const dh = toPixelH(dragged.layout.h ?? 1)
+        const dh = getWidgetPixelHeight(dragged, dragged.layout.h ?? 1)
         const centerX = newPx + dw / 2
         const centerY = newPy + dh / 2
 
@@ -1084,16 +1291,16 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           const ow = Math.min(other.layout.w, c)
           const oh = other.layout.h ?? 1
           const ox = toPixelX(Math.min(other.layout.x, c - ow))
-          const oy = toPixelY(other.layout.y)
+          const oy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
           const owPx = itemWidth(ow)
-          const ohPx = toPixelH(oh)
+          const ohPx = getWidgetPixelHeight(other, oh)
           if (centerX >= ox && centerX < ox + owPx && centerY >= oy && centerY < oy + ohPx) {
             updateWidgetLayouts([
               { id: drag.widgetId, layout: { ...dragged.layout, x: other.layout.x, y: other.layout.y } },
               { id: other.id, layout: { ...other.layout, x: dragged.layout.x, y: dragged.layout.y } },
             ])
             drag.startPx = toPixelX(other.layout.x)
-            drag.startPy = toPixelY(other.layout.y)
+            drag.startPy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
             drag.startPointerX = e.clientX
             drag.startPointerY = e.clientY
             break
@@ -1106,6 +1313,27 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         const resize = resizeRef.current
         const newWidth = Math.max(COLUMN_WIDTH / 2, resize.startW + (e.clientX - resize.startPointerX))
         setResizeVisual({ widgetId: resize.widgetId, width: newWidth })
+      }
+
+      // ── Rubber-band selection ──
+      if (selectionBoxRef.current) {
+        const sb = selectionBoxRef.current
+        const gridEl = gridAreaRef.current
+        if (gridEl) {
+          const rect = gridEl.getBoundingClientRect()
+          const scrollViewport = gridEl.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
+          const scrollTop = scrollViewport?.scrollTop ?? 0
+          const x = e.clientX - rect.left - 16
+          const y = e.clientY - rect.top + scrollTop - 16
+          const newBox = {
+            x1: Math.min(sb.startX, x),
+            y1: Math.min(sb.startY, y),
+            x2: Math.max(sb.startX, x),
+            y2: Math.max(sb.startY, y),
+          }
+          setSelectionBox(newBox)
+          selectionBoxValueRef.current = newBox
+        }
       }
 
       // ── FAB drag ghost (activate after 8px threshold) ──
@@ -1136,7 +1364,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           const finalPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
           const w = Math.min(dragged.layout.w, c)
           const targetX = Math.max(0, Math.min(c - w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
-          const targetY = Math.max(0, Math.round(finalPy / (ROW_HEIGHT + GRID_GAP)))
+          const targetY = Math.max(0, snapToRow(finalPy, rowHeightsRef.current))
           const occupied = widgets.some((o) => o.id !== drag.widgetId && o.layout.x === targetX && o.layout.y === targetY)
           if (!occupied) {
             updateWidgetLayouts([{ id: drag.widgetId, layout: { ...dragged.layout, x: targetX, y: targetY } }])
@@ -1158,6 +1386,29 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         }
         resizeRef.current = null
         setResizeVisual(null)
+      }
+
+      // ── Finish rubber-band selection ──
+      if (selectionBoxRef.current) {
+        const box = selectionBoxValueRef.current
+        selectionBoxRef.current = null
+        setSelectionBox(null)
+        selectionBoxValueRef.current = null
+        if (box && (box.x2 - box.x1 > 5 || box.y2 - box.y1 > 5)) {
+          const selected: string[] = []
+          for (const widget of widgetsRef.current) {
+            const placement = layoutMapRef.current?.get(widget.id)
+            if (!placement) continue
+            const wx1 = toPixelX(placement.x)
+            const wy1 = pixelYFromRows(placement.y, rowHeightsRef.current)
+            const wx2 = wx1 + itemWidth(placement.w)
+            const wy2 = wy1 + getWidgetPixelHeight(widget, placement.h)
+            if (wx1 < box.x2 && wx2 > box.x1 && wy1 < box.y2 && wy2 > box.y1) {
+              selected.push(widget.id)
+            }
+          }
+          if (selected.length > 0) setSelectedWidgetsRef.current(selected)
+        }
       }
 
       // ── Finish FAB drag — place widget on grid or treat as click ──
@@ -1193,10 +1444,10 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           const relY = e.clientY - rect.top + scrollTop - 16
 
           const c = colsRef.current
-          const iw = type === 'empty-diagram' ? 2 : 1
+          const iw = type === 'empty-diagram' || type === 'paragraphs' ? 2 : 1
 
           let gx = Math.max(0, Math.min(c - iw, Math.round(relX / (COLUMN_WIDTH + GRID_GAP))))
-          let gy = Math.max(0, Math.round(relY / (ROW_HEIGHT + GRID_GAP)))
+          let gy = Math.max(0, snapToRow(relY, rowHeightsRef.current))
 
           const droppedOnGrid = relX >= -COLUMN_WIDTH && relY >= -ROW_HEIGHT && e.clientX < rect.right + 20 && e.clientY < rect.bottom + 20
 
@@ -1241,6 +1492,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
     if (type === 'text') {
       visualization = { type: 'text', data: { title: 'Headline', content: '' } }
+    } else if (type === 'paragraphs') {
+      visualization = { type: 'paragraphs', data: { title: 'Paragraphs', content: '' } }
     } else {
       visualization = { type: 'empty-diagram', data: {} }
     }
@@ -1262,12 +1515,23 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     setFabOpen(false)
   }, [])
 
-  // ── Empty diagram: generate via LLM ──
+  // ── Empty diagram: generate via LLM — keep placeholder visible until data arrives ──
   const handleGenerateDiagram = useCallback((widgetId: string, prompt: string) => {
-    removeWidget(widgetId)
+    const widget = dashboardWidgets.find((w) => w.id === widgetId)
+    if (widget) {
+      const placement = layoutMap.get(widgetId)
+      // Register the placeholder so onVisualization can atomically swap it out
+      setPendingReplacement({
+        widgetId,
+        x: placement?.x ?? widget.layout.x,
+        y: placement?.y ?? widget.layout.y,
+        w: placement?.w ?? widget.layout.w,
+      })
+    }
+    // Do NOT remove the widget here — it stays until the visualization arrives
     sendUserMessage(prompt)
     setEmptyDiagramDialogId(null)
-  }, [removeWidget, sendUserMessage])
+  }, [sendUserMessage, setPendingReplacement, dashboardWidgets, layoutMap])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
     const data = widget.visualization.data
@@ -1289,11 +1553,11 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     layoutMap.forEach((p) => {
       const widget = dashboardWidgets.find((w) => w.id === p.id)
       const pixH = widget ? getWidgetPixelHeight(widget, p.h) : toPixelH(p.h)
-      const bottom = toPixelY(p.y) + pixH
+      const bottom = pixelYFromRows(p.y, rowHeights) + pixH
       if (bottom > maxBottom) maxBottom = bottom
     })
     return maxBottom
-  }, [layoutMap, dashboardWidgets])
+  }, [layoutMap, dashboardWidgets, rowHeights])
 
   const isDragging = dragVisual !== null || fabDragVisual !== null
 
@@ -1321,6 +1585,14 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             {dashboardWidgets.length} widget{dashboardWidgets.length !== 1 ? 's' : ''}
           </p>
         </div>
+        {selectedWidgetIds.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{selectedWidgetIds.length} selected</span>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => clearWidgetSelection()}>
+              Clear
+            </Button>
+          </div>
+        )}
         {dashboardWidgets.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1341,7 +1613,21 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
       {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
-        <div ref={gridAreaRef} className={cn('p-4', isDragging && 'cursor-grabbing')}>
+        <div
+          ref={gridAreaRef}
+          className={cn('p-4', isDragging && 'cursor-grabbing')}
+          onPointerDown={(e) => {
+            const target = e.target as HTMLElement
+            if (target.closest('[data-widget-id]')) return
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            const scrollViewport = (e.currentTarget as HTMLElement).closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
+            const scrollTop = scrollViewport?.scrollTop ?? 0
+            const x = e.clientX - rect.left - 16
+            const y = e.clientY - rect.top + scrollTop - 16
+            selectionBoxRef.current = { startX: x, startY: y, scrollTop }
+            if (!e.shiftKey) clearWidgetSelection()
+          }}
+        >
           {dashboardWidgets.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="rounded-full bg-muted p-4 mb-4">
@@ -1354,13 +1640,28 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             </div>
           ) : (
             <div ref={gridRef} style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
+              {/* Rubber-band selection overlay */}
+              {selectionBox && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: selectionBox.x1,
+                    top: selectionBox.y1,
+                    width: selectionBox.x2 - selectionBox.x1,
+                    height: selectionBox.y2 - selectionBox.y1,
+                    pointerEvents: 'none',
+                    zIndex: 20,
+                  }}
+                  className="border border-primary bg-primary/10 rounded"
+                />
+              )}
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
                 const isBeingResized = resizeVisual?.widgetId === widget.id
                 const placement = layoutMap.get(widget.id)
 
                 const px = isBeingDragged ? dragVisual.px : toPixelX(placement?.x ?? widget.layout.x)
-                const py = isBeingDragged ? dragVisual.py : toPixelY(placement?.y ?? widget.layout.y)
+                const py = isBeingDragged ? dragVisual.py : pixelYFromRows(placement?.y ?? widget.layout.y, rowHeights)
                 const displayW = placement?.w ?? Math.min(widget.layout.w, cols)
                 const displayH = placement?.h ?? (widget.layout.h ?? 1)
                 const w = isBeingResized ? resizeVisual.width : itemWidth(displayW)
@@ -1369,6 +1670,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                 return (
                   <div
                     key={widget.id}
+                    data-widget-id={widget.id}
                     style={{
                       position: 'absolute',
                       transform: `translate(${px}px, ${py}px)`,
@@ -1377,12 +1679,17 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                       transition: isBeingDragged || isBeingResized ? 'none' : 'transform 200ms ease, width 200ms ease',
                       zIndex: isBeingDragged ? 10 : 1,
                     }}
+                    className={cn(selectedWidgetIds.includes(widget.id) && 'ring-2 ring-primary ring-offset-1 ring-offset-background rounded-xl')}
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('button, input, a, [role="button"]')) return
+                      toggleWidgetSelection(widget.id, e.shiftKey)
+                    }}
                   >
                     <DashboardWidgetCard
                       widget={widget}
                       isNew={widget.isNew}
                       onRemove={() => removeWidget(widget.id)}
-                      onMaximize={() => setFullscreenWidget(widget)}
+                      onMaximize={() => { setFullscreenWidget(widget); setSelectedWidgets([widget.id]) }}
                       onDownload={() => handleDownload(widget)}
                       onDragHandleDown={(e) => handleDragHandleDown(widget.id, e)}
                       onUpdateVisualizationData={(data) =>
@@ -1395,6 +1702,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                           ? () => setEmptyDiagramDialogId(widget.id)
                           : undefined
                       }
+                      isWorking={pendingReplacement?.widgetId === widget.id}
                     />
                     {/* Resize handle — right edge */}
                     {cols >= 2 && (
@@ -1464,6 +1772,14 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             <BarChart2Icon className="h-4 w-4 text-muted-foreground" />
             New Chart
           </button>
+          {/* Paragraphs card */}
+          <button
+            className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
+            onPointerDown={(e) => handleFabItemDragStart('paragraphs', e)}
+          >
+            <AlignLeftIcon className="h-4 w-4 text-muted-foreground" />
+            Paragraphs
+          </button>
           {/* Headline text card */}
           <button
             className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
@@ -1503,6 +1819,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         >
           {fabDragVisual.type === 'empty-diagram'
             ? <><BarChart2Icon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Chart</span></>
+            : fabDragVisual.type === 'paragraphs'
+            ? <><AlignLeftIcon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Paragraphs</span></>
             : <><TypeIcon className="h-4 w-4 text-primary" /><span className="text-xs font-medium text-primary">Text</span></>
           }
         </div>

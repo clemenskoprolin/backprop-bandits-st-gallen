@@ -18,8 +18,8 @@ export interface Message {
 }
 
 export interface Visualization {
-  type: 'chart' | 'table' | 'cards' | 'text' | 'empty-diagram' | 'none'
-  data: ChartData | TableData | CardsData | TextData | EmptyDiagramData | null
+  type: 'chart' | 'table' | 'cards' | 'text' | 'paragraphs' | 'empty-diagram' | 'none'
+  data: ChartData | TableData | CardsData | TextData | ParagraphsData | EmptyDiagramData | null
 }
 
 export interface ChartData {
@@ -53,6 +53,11 @@ export interface CardsData {
 export interface TextData {
   title: string
   content?: string
+}
+
+export interface ParagraphsData {
+  title: string
+  content: string
 }
 
 export interface EmptyDiagramData {

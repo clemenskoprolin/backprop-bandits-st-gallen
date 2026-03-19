@@ -25,6 +25,10 @@ interface ChatStore {
   showChat: boolean
   showDashboard: boolean
   dashboardWidgets: DashboardWidget[]
+  /** Widget to swap out once the LLM delivers a visualization to replace it. */
+  pendingReplacement: { widgetId: string; x: number; y: number; w: number } | null
+  /** IDs of widgets currently selected as LLM context. */
+  selectedWidgetIds: string[]
   /** Per-session widget cache so positions/sizes survive session switches */
   _sessionWidgetCache: Record<string, DashboardWidget[]>
 
@@ -41,6 +45,10 @@ interface ChatStore {
   clearCurrentSession: () => void
 
   // Dashboard widget actions
+  setPendingReplacement: (replacement: { widgetId: string; x: number; y: number; w: number } | null) => void
+  setSelectedWidgets: (ids: string[]) => void
+  toggleWidgetSelection: (id: string, additive: boolean) => void
+  clearWidgetSelection: () => void
   addWidget: (widget: DashboardWidget) => void
   removeWidget: (widgetId: string) => void
   updateWidget: (widgetId: string, update: Partial<DashboardWidget>) => void
@@ -94,6 +102,7 @@ function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
 
 /**
  * Rebuild widgets from messages but apply saved backend layouts where available.
+ * Also restores manual widgets (text headlines, etc.) from saved layout data.
  */
 function buildWidgetsFromMessagesWithLayouts(
   messages: Message[],
@@ -103,14 +112,30 @@ function buildWidgetsFromMessagesWithLayouts(
   if (savedLayouts.length === 0) return widgets
 
   const layoutMap = new Map(savedLayouts.map((l) => [l.id, l]))
-  return widgets.map((w) => {
+  const existingIds = new Set(widgets.map((w) => w.id))
+
+  // Apply saved positions to message-derived widgets
+  const updated = widgets.map((w) => {
     const saved = layoutMap.get(w.id)
     if (!saved) return w
-    return {
-      ...w,
-      layout: { x: saved.x, y: saved.y, w: saved.w, h: w.layout.h },
-    }
+    return { ...w, layout: { x: saved.x, y: saved.y, w: saved.w, h: w.layout.h } }
   })
+
+  // Restore manual widgets (text, etc.) that are not in messages
+  for (const saved of savedLayouts) {
+    if (existingIds.has(saved.id) || !saved.visualization_data) continue
+    const vis = saved.visualization_data as Visualization
+    updated.push({
+      id: saved.id,
+      messageId: saved.message_id,
+      visualization: vis,
+      size: 'medium',
+      layout: { x: saved.x, y: saved.y, w: saved.w, h: 1 },
+      isNew: false,
+    })
+  }
+
+  return updated
 }
 
 /** Persist current widget layouts to the backend (fire-and-forget). */
@@ -122,6 +147,8 @@ function persistWidgetLayouts(sessionId: string, widgets: DashboardWidget[]) {
     y: w.layout.y,
     w: w.layout.w,
     h: w.layout.h,
+    // Persist full visualization for manual widgets (text headlines, etc.) so they survive reloads
+    ...(w.messageId.startsWith('manual_') ? { visualizationData: w.visualization } : {}),
   }))
   saveWidgetLayouts(sessionId, layouts).catch(() => {})
 }
@@ -142,12 +169,13 @@ function getWidgetChartType(widget: DashboardWidget): string {
   return visualization.type
 }
 
-function buildDashboardContext(widgets: DashboardWidget[]): DashboardWidgetContext[] {
+function buildDashboardContext(widgets: DashboardWidget[], selectedIds: string[]): DashboardWidgetContext[] {
   return widgets.map((w) => ({
     id: w.id,
     title: getWidgetTitle(w),
     chart_type: getWidgetChartType(w),
     position: { x: w.layout.x, y: w.layout.y, w: w.layout.w, h: w.layout.h },
+    selected: selectedIds.includes(w.id),
   }))
 }
 
@@ -156,6 +184,7 @@ function addVisualizationWidget(
   visualization: Visualization,
   messageId: string,
   queryUsed?: string | null,
+  overridePosition?: { x: number; y: number; w: number } | null,
 ) {
   const getDefaultSize = (type: string): WidgetSize => {
     if (type === 'cards') return 'medium'
@@ -163,21 +192,27 @@ function addVisualizationWidget(
     return 'large'
   }
 
-  let maxY = 0
-  state.dashboardWidgets.forEach((w) => {
-    const bottomY = w.layout.y + w.layout.h
-    if (bottomY > maxY) maxY = bottomY
-  })
-
   const size = getDefaultSize(visualization.type)
   const sizeConfig = WIDGET_SIZE_CONFIG[size]
+
+  let layout: DashboardWidget['layout']
+  if (overridePosition) {
+    layout = { x: overridePosition.x, y: overridePosition.y, w: overridePosition.w, h: sizeConfig.h }
+  } else {
+    let maxY = 0
+    state.dashboardWidgets.forEach((w) => {
+      const bottomY = w.layout.y + w.layout.h
+      if (bottomY > maxY) maxY = bottomY
+    })
+    layout = { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h }
+  }
 
   return {
     id: `widget_${messageId}`,
     messageId,
     visualization,
     size,
-    layout: { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h },
+    layout,
     queryUsed,
     isNew: true,
   } satisfies DashboardWidget
@@ -194,6 +229,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   showChat: true,
   showDashboard: true,
   dashboardWidgets: [],
+  pendingReplacement: null,
+  selectedWidgetIds: [],
   _sessionWidgetCache: {},
 
   loadSessions: async () => {
@@ -357,7 +394,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       })
     }
 
-    const dashboardCtx = buildDashboardContext(get().dashboardWidgets)
+    const dashboardCtx = buildDashboardContext(get().dashboardWidgets, get().selectedWidgetIds)
 
     try {
       await sendMessageStream(currentSession.session_id, content, {
@@ -390,18 +427,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           fullText += chunk
           updateAssistantMessage()
         },
-        onVisualization: (vis) => {
+        onVisualization: (vis, replaceWidgetId) => {
           visualization = vis
           allVisualizations.push(vis)
           updateAssistantMessage()
 
-          // Add widget to dashboard with unique ID per visualization
           if (vis.type !== 'none') {
             vizCounter++
             const widgetMessageId = vizCounter === 1 ? placeholderId : `${placeholderId}_viz${vizCounter}`
-            const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed)
+
+            // Case 1: LLM explicitly asked to replace an existing widget in-place
+            if (replaceWidgetId) {
+              set((state) => ({
+                dashboardWidgets: state.dashboardWidgets.map((w) =>
+                  w.id === replaceWidgetId
+                    ? { ...w, visualization: vis, queryUsed: queryUsed ?? w.queryUsed, isNew: true }
+                    : w
+                ),
+              }))
+              return
+            }
+
+            // Case 2: consume pending replacement (empty-diagram card → new chart)
+            const pending = vizCounter === 1 ? get().pendingReplacement : null
+            const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed, pending)
             set((state) => ({
-              dashboardWidgets: [...state.dashboardWidgets, widget],
+              dashboardWidgets: [
+                ...state.dashboardWidgets.filter((w) => w.id !== pending?.widgetId),
+                widget,
+              ],
+              pendingReplacement: null,
             }))
           }
         },
@@ -467,7 +522,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
       updateAssistantMessage()
     } finally {
-      set({ isSending: false, isStreaming: false })
+      set({ isSending: false, isStreaming: false, selectedWidgetIds: [] })
     }
   },
 
@@ -476,6 +531,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setShowDashboard: (show: boolean) => set({ showDashboard: show }),
 
   clearCurrentSession: () => set({ currentSession: null, messages: [], dashboardWidgets: [] }),
+
+  setPendingReplacement: (replacement) => set({ pendingReplacement: replacement }),
+
+  setSelectedWidgets: (ids) => set({ selectedWidgetIds: ids }),
+  toggleWidgetSelection: (id, additive) => set((state) => {
+    if (additive) {
+      const already = state.selectedWidgetIds.includes(id)
+      return { selectedWidgetIds: already ? state.selectedWidgetIds.filter((x) => x !== id) : [...state.selectedWidgetIds, id] }
+    }
+    // Non-additive: select only this one, or deselect if it was the only one
+    const onlyThis = state.selectedWidgetIds.length === 1 && state.selectedWidgetIds[0] === id
+    return { selectedWidgetIds: onlyThis ? [] : [id] }
+  }),
+  clearWidgetSelection: () => set({ selectedWidgetIds: [] }),
 
   addWidget: (widget: DashboardWidget) =>
     set((state) => ({ dashboardWidgets: [...state.dashboardWidgets, widget] })),

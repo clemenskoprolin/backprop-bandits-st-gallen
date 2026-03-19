@@ -107,7 +107,7 @@ async def get_aggregated_data_for_chart(
 
 
 @tool
-def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "") -> str:
+def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "", replace_widget_id: str = "") -> str:
     """
     Render a chart on the user's dashboard.
     ALWAYS call this when displaying aggregated/statistical data.
@@ -128,6 +128,9 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
             For pie charts with user-specified colors: '{"value": {"label": "Count"}}' and set "fill" in data_json: '[{"name": "Red", "value": 50, "fill": "red"}, {"name": "Blue", "value": 50, "fill": "blue"}]'
             For boxplot charts: '{"median": {"label": "Median", "color": "var(--chart-1)"}}'
         description: Optional short description shown below the title.
+        replace_widget_id: If the user asked to modify or update an existing chart (e.g. a SELECTED widget), pass that widget's id here.
+            The existing chart will be replaced in-place instead of creating a new one.
+            Leave empty ("") when creating a brand-new chart.
     """
     return "Visualization successfully rendered on UI."
 
@@ -471,14 +474,16 @@ class Agent:
         if self.dashboard_widgets:
             widget_descriptions = []
             for w in self.dashboard_widgets:
-                desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)})"
+                selected_marker = " ⭐ SELECTED" if w.get('selected') else ""
+                desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)}){selected_marker}"
                 widget_descriptions.append(desc)
+            selected_note = "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's question — focus analysis and modifications on these." if any(w.get('selected') for w in self.dashboard_widgets) else ""
             dashboard_context = f"""
 
 CURRENT DASHBOARD STATE:
 The user currently has {len(self.dashboard_widgets)} widget(s) on their dashboard:
 {chr(10).join(widget_descriptions)}
-
+{selected_note}
 You can reference existing widgets when answering. If the user asks to rearrange or reorganize the dashboard, you can create new visualizations that replace or complement existing ones.
 """
 
@@ -601,7 +606,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
         If the user mentions specific colors (e.g. "red and blue"), use those CSS color names directly.
         For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
         Use boxplot for comparing distributions (e.g. tensile strength across materials, comparing machines).
-        If not, still call the function with none values.""" + similar_data + dashboard_context
+        If not, still call the function with none values.
+
+        MODIFYING EXISTING CHARTS:
+        If the user's request is about changing, updating, or modifying a SELECTED widget (marked ⭐),
+        pass that widget's id as `replace_widget_id` to render_visualization.
+        The chart will be updated in-place instead of creating a new one.
+        Example: user says "change that to a bar chart" while a pie chart is selected → set replace_widget_id to that widget's id.""" + similar_data + dashboard_context
 
 
     def build_agent(self):
