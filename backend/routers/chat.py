@@ -81,7 +81,7 @@ def _get_or_create_session(session_id: str | None) -> Session:
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
-def get_similarity_by_query(message: str):
+def get_similarity_by_query(message: str, session_id):
     return "hello"
 
 
@@ -145,7 +145,7 @@ async def chat_stream(req: ChatRequest):
         try:
             from src.agent import Agent
             from langchain_core.messages import HumanMessage
-            similar_messages = get_similarity_by_query(req.message)
+            similar_messages = get_similarity_by_query(req.message, req.session_id)
             tmp = Agent(req.message, similar_messages)
             agent = tmp.create()
             config = {"configurable": {"thread_id": session.session_id}}
@@ -256,7 +256,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     from src.agent import Agent
     from langchain_core.messages import HumanMessage
     config = {"configurable": {"thread_id": session.session_id}}
-    similar_messages = get_similarity_by_query(req.message)
+    similar_messages = get_similarity_by_query(req.message, req.session_id)
     tmp = Agent(req.message, similar_messages)
     agent = tmp.create()
     response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
