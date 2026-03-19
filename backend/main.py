@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import chat, feedback
+from routers import chat, feedback, upload
 from src.agent import init_mcp_client, shutdown_mcp_client
 
 
@@ -40,6 +40,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(feedback.router)
+app.include_router(upload.router)
 
 
 @app.get("/")

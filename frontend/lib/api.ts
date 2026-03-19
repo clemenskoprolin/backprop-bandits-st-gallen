@@ -251,6 +251,23 @@ export async function fetchTemplates(): Promise<Template[]> {
 }
 
 // ---------------------------------------------------------------------------
+// PDF Upload / RAG Ingestion
+// ---------------------------------------------------------------------------
+
+export async function uploadPdf(file: File, sessionId: string): Promise<{ success: boolean; filename: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('session_id', sessionId)
+
+  const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Upload failed ${res.status}: ${body}`)
+  }
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
 // SSE Streaming Chat
 // ---------------------------------------------------------------------------
 

@@ -11,6 +11,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   XIcon,
+  PaperclipIcon,
 } from 'lucide-react'
 import { useChatStore } from '@/lib/chat-store'
 import { cn } from '@/lib/utils'
@@ -23,6 +24,7 @@ import { ChatInput } from './chat-input'
 import { EmptyState } from './empty-state'
 import { DashboardPanel } from './dashboard-panel'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { uploadPdf } from '@/lib/api'
 
 const COLLAPSE_LEFT = 0.15
 const COLLAPSE_RIGHT = 0.85
@@ -59,6 +61,8 @@ export function ChatContainer() {
   const [splitFraction, setSplitFraction] = useState(2 / 3)
   const [rawFraction, setRawFraction] = useState(2 / 3)
   const [dragMode, setDragMode] = useState<DragMode>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [uploadToast, setUploadToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const hasMessages = messages.length > 0
   const hasWidgets = dashboardWidgets.length > 0
@@ -76,6 +80,30 @@ export function ChatContainer() {
 
   const handleSend = (content: string) => {
     sendUserMessage(content)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false)
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    const file = Array.from(e.dataTransfer.files).find((f) => f.name.toLowerCase().endsWith('.pdf'))
+    if (!file) return
+    const sid = currentSession?.session_id ?? `temp_${Date.now()}`
+    try {
+      await uploadPdf(file, sid)
+      setUploadToast({ message: `"${file.name}" ingested into knowledge base`, type: 'success' })
+    } catch {
+      setUploadToast({ message: `Failed to ingest "${file.name}"`, type: 'error' })
+    }
+    setTimeout(() => setUploadToast(null), 3500)
   }
 
   const handleFollowupClick = (followup: string) => {
@@ -224,7 +252,28 @@ export function ChatContainer() {
     <div
       ref={containerRef}
       className={cn('relative flex h-full overflow-hidden', isDragging && 'select-none cursor-col-resize')}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {/* ── PDF drag-and-drop overlay ── */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/90 backdrop-blur-sm border-2 border-dashed border-primary rounded-lg pointer-events-none">
+          <PaperclipIcon className="h-10 w-10 text-primary" />
+          <p className="text-lg font-semibold text-primary">Drop PDF to ingest</p>
+          <p className="text-sm text-muted-foreground">The document will be added to the session knowledge base</p>
+        </div>
+      )}
+
+      {/* ── Upload toast notification ── */}
+      {uploadToast && (
+        <div className={cn(
+          'absolute bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm shadow-lg',
+          uploadToast.type === 'success' ? 'bg-green-600 text-white' : 'bg-destructive text-destructive-foreground'
+        )}>
+          {uploadToast.message}
+        </div>
+      )}
       {/* ── Collapse overlays (only when dragging the main splitter, not when restoring) ── */}
       {dragMode === 'split' && dragIntent?.action === 'collapse-chat' && (
         <div
@@ -342,7 +391,7 @@ export function ChatContainer() {
           </div>
 
           <div className="shrink-0 border-t border-border">
-            <ChatInput onSend={handleSend} isSending={isSending} />
+            <ChatInput onSend={handleSend} isSending={isSending} sessionId={currentSession?.session_id ?? null} />
           </div>
         </div>
       )}
