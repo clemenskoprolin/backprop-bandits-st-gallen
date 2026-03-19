@@ -1,126 +1,3 @@
-================================================================================
-                              SYSTEM ARCHITECTURE
-================================================================================
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                   FRONTEND                                  │
-│                                 Next.js UI                                  │
-│                                                                             │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                         Component Adapter Layer                       │  │
-│  │                     (templates / widgets / panels)                    │  │
-│  │                                                                       │  │
-│  │   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐           │  │
-│  │   │ Chart    │   │ Table    │   │ Cards    │   │ Custom   │           │  │
-│  │   │ Widget   │   │ Widget   │   │ Widget   │   │ Panels   │           │  │
-│  │   └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘           │  │
-│  │        │              │              │              │                 │  │
-│  │        └──────────────┴──────┬───────┴──────────────┘                 │  │
-│  │                               │                                       │  │
-│  │                        Structured JSON                                │  │
-│  └───────────────────────────────┬───────────────────────────────────────┘  │
-└──────────────────────────────────┼──────────────────────────────────────────┘
-                                   │
-                                   │ API (FastAPI / MCP)
-                                   ▼
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                  BACKEND                                    │
-│                               Python / FastAPI                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                               LLM ENGINE LAYER                              │
-│                                                                             │
-│  User Input                                                                 │
-│     │                                                                       │
-│     ▼                                                                       │
-│  ┌───────────────┐                                                          │
-│  │ Ask anything  │                                                          │
-│  └──────┬────────┘                                                          │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌──────────────────────┐                                                   │
-│  │   Context Builder    │◄───────────────┐                                  │
-│  └─────────┬────────────┘                │                                  │
-│            │                             │                                  │
-│            ▼                             │                                  │
-│      ┌────────────┐                      │                                  │
-│      │   LLM      │                      │                                  │
-│      │  Engine    │                      │                                  │
-│      └────┬───────┘                      │                                  │
-│           │                              │                                  │
-│     ┌─────┴─────┐                        │                                  │
-│     │           │                        │                                  │
-│     ▼           ▼                        │                                  │
-│  Query        Text                       │                                  │
-│     │           │                        │                                  │
-│     ▼           │                        │                                  │
-│  ┌──────────────────────────────┐        │                                  │
-│  │ Validation Layer              │        │                                  │
-│  │ (SQL only SELECT allowed)     │        │                                  │
-│  └──────────────┬───────────────┘        │                                  │
-│                 │                        │                                  │
-│                 ▼                        │                                  │
-│            ┌──────────┐                  │                                  │
-│            │ Thinking │                  │                                  │
-│            └────┬─────┘                  │                                  │
-│                 ▼                        │                                  │
-│          ┌──────────────┐                │                                  │
-│          │ Output Engine │───────────────┼───────────────► Structured JSON   │
-│          └──────┬────────┘                │                                  │
-│                 │                         │                                  │
-│             Followups                     │                                  │
-│                                           │                                  │
-└───────────────────────────────────────────┼──────────────────────────────────┘
-                                            │
-                                            │ Context / Augmentation
-                                            ▼
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DATA / KNOWLEDGE                               │
-│                                                                             │
-│  ┌──────────────────────────┐        ┌──────────────────────────┐           │
-│  │      Vector DB           │        │        MongoDB           │           │
-│  │   (Free-text / emb.)     │        │        Schema            │           │
-│  └──────────┬───────────────┘        └──────────┬───────────────┘           │
-│             │                                   │                           │
-│             └───────────────┬───────────────────┘                           │
-│                             ▼                                               │
-│                      Context Augmentation                                   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              HUMAN IN THE LOOP                              │
-│                                                                             │
-│     hm        hm        manual override / validation / feedback              │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-
-================================================================================
-Notes
---------------------------------------------------------------------------------
-- Templates populated from structured JSON
-- LLM produces UI instructions, not UI directly
-- Query validation required before DB access
-- Vector DB used for context retrieval
-- Mongo schema used for query generation
-- MCP / API connects UI <-> LLM <-> Data
-================================================================================
-
-
-================================================================================
-                               PROJECT CONTEXT
-================================================================================
-
 Problem: Material testing engineers and R&D developers struggle to efficiently
 analyse large, inhomogeneous cohorts of test data. Traditional data scientists
 lack domain expertise; engineers lack statistical / data skills. Test data is
@@ -147,7 +24,205 @@ Tech stack:
 Run backend:  uvicorn backend.main:app --reload   (from project root)
 Run frontend: cd frontend && npm run dev
 
+================================================================================
+                              SYSTEM ARCHITECTURE
+================================================================================
 
+You can paste this in place of the diagram and keep the rest unchanged.
+
+⸻
+
+SYSTEM ARCHITECTURE (TEXT DESCRIPTION)
+
+The system consists of five main layers:
+	1.	Frontend (Next.js UI)
+	2.	Backend API (FastAPI)
+	3.	LLM Engine Layer
+	4.	Data / Knowledge Layer
+	5.	Human-in-the-loop feedback
+
+The system is designed so that the LLM produces structured instructions, not UI, and never accesses the database without validation.
+
+⸻
+
+Frontend Layer
+
+Technology:
+	•	Next.js
+	•	React
+	•	TypeScript
+	•	Tailwind CSS
+
+The frontend renders the chat UI and visualizations.
+
+It contains a component adapter layer that maps structured JSON responses to UI components.
+
+Supported UI components:
+	•	Chart widget
+	•	Table widget
+	•	Cards widget
+	•	Custom panels
+
+The frontend receives responses from the backend in structured JSON format and renders them.
+
+The frontend never executes database queries.
+
+Communication with backend happens via the API.
+
+⸻
+
+Backend Layer
+
+Technology:
+	•	Python
+	•	FastAPI
+	•	Uvicorn
+
+Responsibilities:
+	•	API routing
+	•	Session management
+	•	Streaming responses (SSE)
+	•	Query validation
+	•	Context building
+	•	LLM orchestration
+	•	Output formatting
+
+Main endpoint:
+
+POST /api/chat/stream
+
+This endpoint streams events in the following order:
+	•	session
+	•	thinking
+	•	query
+	•	text
+	•	visualization
+	•	followups
+	•	done
+
+A non-streaming fallback endpoint also exists.
+
+⸻
+
+LLM Engine Layer
+
+The LLM engine converts natural language input into:
+	•	validated database queries
+	•	statistical analysis
+	•	natural language explanations
+	•	visualization instructions
+
+Pipeline:
+	1.	User input received
+	2.	Context builder collects schema, vector context, history, and templates
+	3.	LLM generates query and reasoning
+	4.	Validation layer checks query
+	5.	Query executed
+	6.	Output engine creates structured JSON
+	7.	Response streamed to frontend
+
+Rules:
+	•	Only SELECT queries allowed (or the equivalent in MongoDB)
+	•	Query must match schema
+	•	Output must be structured
+	•	Visualization must be declarative
+
+⸻
+
+Context Builder
+
+The context builder prepares the prompt for the LLM.
+
+Sources:
+	•	MongoDB schema
+	•	Vector DB documents
+	•	Session history
+	•	Templates
+	•	System instructions
+
+The goal is to provide enough context for correct query generation and reasoning.
+
+⸻
+
+Validation Layer
+
+The validation layer checks generated queries before execution.
+
+Restrictions:
+	•	Only SELECT allowed
+	•	No INSERT / UPDATE / DELETE
+	•	Only known tables
+	•	Only known columns
+
+If validation fails, the LLM must regenerate the query.
+
+⸻
+
+Output Engine
+
+The output engine converts LLM results into structured JSON.
+
+Example response:
+
+{
+text: string,
+visualization: {
+type: chart | table | cards | none,
+data: object
+},
+followups: string[],
+query_used: string,
+thinking: string[]
+}
+
+The frontend uses this structure to render UI.
+
+⸻
+
+Data / Knowledge Layer
+
+Two data sources are used.
+
+MongoDB:
+	•	stores schema
+	•	stores sessions
+	•	stores templates
+	•	stores feedback
+
+Vector DB:
+	•	stores domain knowledge
+	•	stores documentation
+	•	stores standards
+	•	stores previous analyses
+
+Vector DB is used for context retrieval.
+
+MongoDB schema is used for query generation.
+
+⸻
+
+Human in the Loop
+
+Feedback can be sent via API.
+
+Used for:
+	•	validation
+	•	corrections
+	•	evaluation
+	•	manual overrides
+	•	improving prompts
+
+This allows continuous improvement of the assistant.
+
+Design Principles
+	•	LLM produces instructions, not UI
+	•	Queries must be validated
+	•	Schema must be known
+	•	Context must be explicit
+	•	Output must be structured
+	•	UI must be JSON-driven
+	•	Domain knowledge comes from vector DB
+	•	Engineers must be able to trust results
 ================================================================================
                                  API ROUTES
 ================================================================================
