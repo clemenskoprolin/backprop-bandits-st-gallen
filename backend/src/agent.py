@@ -103,7 +103,7 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
 def submit_answer(answer: str, hypotheses: list[str]) -> str:
     """
     Always call this tool to submit your final answer and hypotheses.
-    
+
     Args:
         answer: Clear, concise answer to the user's question
         hypotheses: List of 3 follow-up hypotheses worth investigating. Empty list if none.
@@ -194,8 +194,8 @@ tool_node = ToolNode(custom_tools)
 visualization_tool = ToolNode([render_visualization])
 submit_tool = ToolNode([submit_answer])
 
-# llm = ChatAnthropic(model="claude-sonnet-4-6")
-llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
+llm = ChatAnthropic(model="claude-sonnet-4-6")
+# llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
 llm_with_tools = llm.bind_tools(custom_tools)
 llm_visualizer = llm.bind_tools([render_visualization])
 llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
@@ -321,11 +321,11 @@ def call_model(state: MessagesState):
     return {"messages": [response]}
 
 
-def should_continue(state: MessagesState) -> Literal["tools", "output"]:
+def should_continue(state: MessagesState) -> Literal["tools", "visualizer"]:
     last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "tools"
-    return "output"
+    return "visualizer"
 
 
 def output_node(state: MessagesState):
@@ -503,9 +503,9 @@ class Agent:
         graph_builder.add_node("visual_tool", visualization_tool)
         graph_builder.add_node("output", output_node)
         graph_builder.add_node("submit_tool", submit_tool)
-        graph_builder.add_edge(START, "visualizer")
-        # graph_builder.add_conditional_edges("agent", should_continue)
-        # graph_builder.add_edge("tools", "visualizer")
+        graph_builder.add_edge(START, "agent")
+        graph_builder.add_conditional_edges("agent", should_continue)
+        graph_builder.add_edge("tools", "agent")
         graph_builder.add_conditional_edges("visualizer", has_visual)
         graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", "submit_tool")
