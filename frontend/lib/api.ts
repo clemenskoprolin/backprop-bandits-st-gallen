@@ -131,9 +131,17 @@ export async function fetchSessions(): Promise<Session[]> {
   return data.sessions
 }
 
+export interface SavedWidgetLayout {
+  id: string
+  message_id: string
+  x: number
+  y: number
+  w: number
+}
+
 export async function fetchSession(
   id: string
-): Promise<{ session: Session; messages: Message[] }> {
+): Promise<{ session: Session; messages: Message[]; widgetLayouts: SavedWidgetLayout[] }> {
   const raw = await apiFetch<Record<string, unknown>>(`/api/sessions/${id}`)
 
   const messages = ((raw.messages ?? []) as Record<string, unknown>[]).map((m) => ({
@@ -154,7 +162,9 @@ export async function fetchSession(
     message_count: messages.length,
   }
 
-  return { session, messages }
+  const widgetLayouts = ((raw.widget_layouts ?? []) as SavedWidgetLayout[])
+
+  return { session, messages, widgetLayouts }
 }
 
 /**

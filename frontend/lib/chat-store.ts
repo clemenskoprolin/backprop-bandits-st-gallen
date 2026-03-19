@@ -9,6 +9,7 @@ import {
   saveWidgetLayouts,
   fetchTemplates,
   sendMessageStream,
+  SavedWidgetLayout,
 } from './api'
 
 interface ChatStore {
@@ -71,6 +72,27 @@ function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
         queryUsed: m.query_used,
       }
     })
+}
+
+/**
+ * Rebuild widgets from messages but apply saved backend layouts where available.
+ */
+function buildWidgetsFromMessagesWithLayouts(
+  messages: Message[],
+  savedLayouts: SavedWidgetLayout[],
+): DashboardWidget[] {
+  const widgets = buildWidgetsFromMessages(messages)
+  if (savedLayouts.length === 0) return widgets
+
+  const layoutMap = new Map(savedLayouts.map((l) => [l.id, l]))
+  return widgets.map((w) => {
+    const saved = layoutMap.get(w.id)
+    if (!saved) return w
+    return {
+      ...w,
+      layout: { x: saved.x, y: saved.y, w: saved.w, h: w.layout.h },
+    }
+  })
 }
 
 /** Persist current widget layouts to the backend (fire-and-forget). */
@@ -158,9 +180,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     set({ isLoading: true })
     try {
-      const { session, messages } = await fetchSession(id)
+      const { session, messages, widgetLayouts } = await fetchSession(id)
       const cached = get()._sessionWidgetCache[id]
-      const widgets = cached ?? buildWidgetsFromMessages(messages)
+      const widgets = cached ?? buildWidgetsFromMessagesWithLayouts(messages, widgetLayouts)
       set({ currentSession: session, messages, dashboardWidgets: widgets })
     } catch (err) {
       console.error('Failed to load session:', err)
