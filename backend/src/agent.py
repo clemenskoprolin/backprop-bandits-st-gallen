@@ -315,7 +315,7 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
 
 
 @tool
-def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> str:
+def run_python_analysis(code: str, data_json: str = "", data_id: str = "", data_ids: list[str] = []) -> str:
     """
     Execute a Python code snippet for statistical analysis on material testing data.
 
@@ -325,6 +325,7 @@ def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> st
     The execution environment pre-populates:
       - `data`: list of dicts parsed from data_json (or resolved from data_id)
       - `df`: pandas DataFrame built from data
+      - `datasets`: dict mapping data_id → resolved data (only when data_ids is used)
       - `np`: numpy
       - `pd`: pandas
       - `stats`: scipy.stats
@@ -334,9 +335,13 @@ def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> st
     Args:
         code: Python snippet. Must assign `result` to capture output.
         data_json: JSON string (list of dicts) from a `find` or `aggregate` call.
-            Can be omitted if data_id is provided.
+            Can be omitted if data_id or data_ids is provided.
         data_id: Optional data_id from a previous MongoDB tool result. If provided,
             the referenced dataset is resolved and used instead of data_json.
+            Sets `data` and `df` to the resolved dataset.
+        data_ids: Optional list of data_ids from previous MongoDB tool results.
+            When provided, each is resolved and available in `datasets` dict
+            (keyed by data_id). The first dataset is also set as `data` and `df`.
 
     Returns:
         JSON string with keys "output" (stdout) and "result" (value of `result`).
@@ -348,8 +353,34 @@ def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> st
 
     TIMEOUT_SECONDS = 10
 
-    # Resolve data_id if provided
-    if data_id:
+    datasets = {}
+
+    # Resolve multiple data_ids if provided
+    if data_ids:
+        for did in data_ids:
+            resolved = _resolve_data_id(did)
+            if resolved is not None:
+                if isinstance(resolved, str):
+                    try:
+                        datasets[did] = json.loads(resolved)
+                    except json.JSONDecodeError as e:
+                        return json.dumps(
+                            {
+                                "error": f"Failed to parse resolved data for data_id {did}: {e}",
+                                "output": "",
+                                "result": None,
+                            }
+                        )
+                else:
+                    datasets[did] = resolved
+            else:
+                return json.dumps(
+                    {"error": f"Unknown data_id: {did}", "output": "", "result": None}
+                )
+        # Set `data` to the first dataset for convenience
+        first_key = data_ids[0]
+        data = datasets[first_key]
+    elif data_id:
         resolved = _resolve_data_id(data_id)
         if resolved is not None:
             if isinstance(resolved, str):
@@ -388,6 +419,7 @@ def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> st
             "pd": pd,
             "stats": stats,
             "data": data,
+            "datasets": datasets,
             "df": (
                 pd.DataFrame(data)
                 if isinstance(data, list) and data and isinstance(data[0], dict)
@@ -782,7 +814,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         Custom tools:
         - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
-            Accepts either `data_json` (raw JSON string) or `data_id` (from a previous MongoDB result).
+            Accepts either `data_json` (raw JSON string), `data_id` (single previous MongoDB result),
+            or `data_ids` (list of data_ids from multiple previous MongoDB results).
+            When using `data_ids`, all datasets are available in the `datasets` dict (keyed by data_id),
+            and the first dataset is also set as `data`/`df` for convenience.
             Works with any data shape — your Python code handles the structure.
         - `render_visualization` - Display charts on the UI
             Accepts an optional `data_id`, but ONLY when the referenced data is already FLAT
@@ -792,8 +827,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
             For nested data, either build data_json manually or use run_python_analysis to reshape first.
 
         Statistical Analysis workflow:
-        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data — note the `data_id` from the response
+        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data — note the `data_id` from each response
         2. Pass the `data_id` into `run_python_analysis` (or pass the raw JSON as `data_json`)
+           For multi-dataset analysis (e.g. comparing two query results), pass multiple IDs via `data_ids`
+           and access them in code as `datasets["<id>"]`
         3. Write a Python snippet that assigns the final answer to `result`
         4. Use the returned `result` to compose your natural-language answer
 
