@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from models import (
     ChatRequest,
@@ -29,6 +30,10 @@ from models import (
     SessionSummary,
     VisualizationBlock,
 )
+
+
+class RenameSessionRequest(BaseModel):
+    title: str
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -292,6 +297,16 @@ async def get_session(session_id: str) -> Session:
 # ---------------------------------------------------------------------------
 # DELETE /api/sessions/{session_id}
 # ---------------------------------------------------------------------------
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, req: RenameSessionRequest):
+    """Rename a session."""
+    session = _sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.title = req.title
+    return {"status": "updated", "session_id": session_id, "title": req.title}
 
 
 @router.delete("/sessions/{session_id}")

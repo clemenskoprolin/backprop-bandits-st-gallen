@@ -1,12 +1,15 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import {
   PlusIcon,
   MessageSquareIcon,
   Trash2Icon,
   FlaskConicalIcon,
+  PencilIcon,
+  CheckIcon,
+  XIcon,
 } from 'lucide-react'
 import { useChatStore } from '@/lib/chat-store'
 import { Button } from '@/components/ui/button'
@@ -17,7 +20,6 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarMenuAction,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
@@ -49,11 +51,53 @@ export function SessionSidebar() {
     loadSession,
     createNewSession,
     deleteCurrentSession,
+    renameSession,
   } = useChatStore()
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadSessions()
   }, [loadSessions])
+
+  useEffect(() => {
+    if (editingId && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editingId])
+
+  const startRename = useCallback((sessionId: string, currentTitle: string) => {
+    setEditingId(sessionId)
+    setEditTitle(currentTitle)
+  }, [])
+
+  const confirmRename = useCallback(async () => {
+    if (editingId && editTitle.trim()) {
+      await renameSession(editingId, editTitle.trim())
+    }
+    setEditingId(null)
+    setEditTitle('')
+  }, [editingId, editTitle, renameSession])
+
+  const cancelRename = useCallback(() => {
+    setEditingId(null)
+    setEditTitle('')
+  }, [])
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        confirmRename()
+      } else if (e.key === 'Escape') {
+        cancelRename()
+      }
+    },
+    [confirmRename, cancelRename]
+  )
 
   return (
     <Sidebar className="border-r border-border">
@@ -71,7 +115,7 @@ export function SessionSidebar() {
 
       <SidebarSeparator />
 
-      <SidebarContent className="px-2">
+      <SidebarContent className="px-2 overflow-y-auto">
         <SidebarGroup>
           <div className="flex items-center justify-between px-3 py-1">
             <SidebarGroupLabel>Sessions</SidebarGroupLabel>
@@ -94,49 +138,130 @@ export function SessionSidebar() {
             <SidebarMenu className="gap-1.5">
               {sessions.map((session) => {
                 const isActive = currentSession?.session_id === session.session_id
+                const isEditing = editingId === session.session_id
+
                 return (
                   <SidebarMenuItem key={session.session_id}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => loadSession(session.session_id)}
-                      className="py-6"
-                    >
-                      <MessageSquareIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="flex flex-col min-w-0 flex-1 gap-0.5">
-                        <span className="truncate text-sm">{session.title}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(session.updated_at), { addSuffix: true })}
-                        </span>
+                    {isEditing ? (
+                      <div className="flex items-center gap-1 px-2 py-1.5 w-full">
+                        <input
+                          ref={inputRef}
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          onBlur={confirmRename}
+                          className="flex-1 min-w-0 rounded-md border border-primary bg-background px-2 py-1.5 text-sm outline-none ring-1 ring-primary/30"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 text-primary hover:text-primary"
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            confirmRename()
+                          }}
+                        >
+                          <CheckIcon className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            cancelRename()
+                          }}
+                        >
+                          <XIcon className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
-                    </SidebarMenuButton>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <SidebarMenuAction showOnHover>
-                          <Trash2Icon className="h-4 w-4" />
-                          <span className="sr-only">Delete session</span>
-                        </SidebarMenuAction>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Session</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete &quot;{session.title}&quot;? This action cannot be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => {
-                              loadSession(session.session_id)
-                              deleteCurrentSession()
+                    ) : (
+                      <>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => loadSession(session.session_id)}
+                          className="py-6 pr-2"
+                        >
+                          <MessageSquareIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div className="flex flex-col min-w-0 flex-1 gap-0.5">
+                            <span className="truncate text-sm">{session.title}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(session.updated_at), { addSuffix: true })}
+                            </span>
+                          </div>
+                        </SidebarMenuButton>
+
+                        {/* Gradient fade + action buttons – revealed on hover */}
+                        <div className="absolute right-0 top-0 bottom-0 flex items-center opacity-0 group-hover/menu-item:opacity-100 transition-opacity pointer-events-none">
+                          {/* Gradient fade from transparent to sidebar bg */}
+                          <div
+                            className="w-12 h-full"
+                            style={{
+                              background: isActive
+                                ? 'linear-gradient(to right, transparent, var(--sidebar-accent))'
+                                : 'linear-gradient(to right, transparent, var(--sidebar-background, hsl(var(--sidebar-background))))',
                             }}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          />
+                          {/* Solid background behind buttons */}
+                          <div
+                            className="flex items-center gap-0.5 pr-1.5 h-full pointer-events-auto"
+                            style={{
+                              backgroundColor: isActive
+                                ? 'var(--sidebar-accent)'
+                                : 'var(--sidebar-background, hsl(var(--sidebar-background)))',
+                            }}
                           >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    startRename(session.session_id, session.title)
+                                  }}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                                >
+                                  <PencilIcon className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Rename session</span>
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">Rename</TooltipContent>
+                            </Tooltip>
+
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <button
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                                >
+                                  <Trash2Icon className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Delete session</span>
+                                </button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete Session</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Are you sure you want to delete &quot;{session.title}&quot;? This action cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => {
+                                      loadSession(session.session_id)
+                                      deleteCurrentSession()
+                                    }}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </SidebarMenuItem>
                 )
               })}

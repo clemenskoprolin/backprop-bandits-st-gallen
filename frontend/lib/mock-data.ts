@@ -281,6 +281,11 @@ export async function deleteSession(id: string): Promise<void> {
   console.log('Deleted session:', id)
 }
 
+export async function renameSession(id: string, title: string): Promise<void> {
+  await delay(200)
+  console.log('Renamed session:', id, 'to', title)
+}
+
 export async function fetchTemplates(): Promise<Template[]> {
   await delay(200)
   return mockTemplates

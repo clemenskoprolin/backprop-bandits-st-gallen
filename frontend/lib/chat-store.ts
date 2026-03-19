@@ -5,6 +5,7 @@ import {
   fetchSession,
   createSession,
   deleteSession,
+  renameSession,
   fetchTemplates,
   sendMessage,
 } from './mock-data'
@@ -27,6 +28,7 @@ interface ChatStore {
   loadTemplates: () => Promise<void>
   createNewSession: () => Promise<void>
   deleteCurrentSession: () => Promise<void>
+  renameSession: (id: string, title: string) => Promise<void>
   sendUserMessage: (content: string) => Promise<void>
   setShowChat: (show: boolean) => void
   setShowDashboard: (show: boolean) => void
@@ -117,6 +119,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } finally {
       set({ isLoading: false })
     }
+  },
+
+  renameSession: async (id: string, title: string) => {
+    await renameSession(id, title)
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.session_id === id ? { ...s, title } : s
+      ),
+      currentSession:
+        state.currentSession?.session_id === id
+          ? { ...state.currentSession, title }
+          : state.currentSession,
+    }))
   },
 
   deleteCurrentSession: async () => {
