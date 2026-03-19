@@ -12,6 +12,10 @@ import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   GripVerticalIcon,
+  BarChart2Icon,
+  TypeIcon,
+  PlusIcon,
+  FileTextIcon,
 } from 'lucide-react'
 import {
   Bar,
@@ -904,6 +908,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const gridAreaRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
 
   const handleExportPDF = useCallback(async () => {
@@ -972,6 +977,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     startX: number
     startY: number
   } | null>(null)
+  const [fabOpen, setFabOpen] = useState(false)
   const [fabDragVisual, setFabDragVisual] = useState<{ type: FabDragType; x: number; y: number } | null>(null)
 
   // Stable ref wrappers for store actions (Zustand actions are stable, but refs are safer in effects)
