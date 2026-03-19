@@ -1,6 +1,7 @@
 import base64
 import json
 import concurrent.futures
+import logging
 from typing import Literal
 from langchain_core.tools import tool
 from langchain_anthropic import ChatAnthropic
@@ -15,12 +16,74 @@ from langchain_core.messages import trim_messages
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+
+def _text_metrics(text: str | None) -> dict:
+    value = text or ""
+    chars = len(value)
+    bytes_len = len(value.encode("utf-8"))
+    return {
+        "chars": chars,
+        "bytes": bytes_len,
+        "est_tokens": max(1, round(chars / 4)) if chars else 0,
+    }
+
+
+def _message_metrics(messages) -> dict:
+    per_message_chars = []
+    total_chars = 0
+    for msg in messages:
+        content = getattr(msg, "content", "")
+        if isinstance(content, str):
+            chars = len(content)
+        elif isinstance(content, list):
+            chars = len(json.dumps(content, default=str))
+        else:
+            chars = len(str(content))
+        per_message_chars.append(chars)
+        total_chars += chars
+
+    return {
+        "message_count": len(messages),
+        "total_chars": total_chars,
+        "total_est_tokens": max(1, round(total_chars / 4)) if total_chars else 0,
+        "per_message_chars": per_message_chars,
+    }
+
+
+def _dump_invoke_context(node_name: str, messages: list):
+    import time
+    import os
+    import json
+    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts")
+    os.makedirs(debug_dir, exist_ok=True)
+    query_id = str(int(time.time() * 1000))
+    debug_file = os.path.join(debug_dir, f"invoke_{node_name}_{query_id}.json")
+
+    dumpable_messages = []
+    for msg in messages:
+        try:
+            dumpable_messages.append({"type": type(msg).__name__, "content": getattr(msg, "content", "")})
+        except Exception:
+            dumpable_messages.append({"type": str(type(msg)), "content": str(msg)})
+
+    try:
+        with open(debug_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "node": node_name,
+                "messages": dumpable_messages,
+            }, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to dump invoke context: {e}")
+
+
 DB_CONTEXT = """
 ## Database Overview
- 
+
 ### Collections
 - `tests` — primary collection containing all material test records
- 
+
 ### `tests` Schema
 Top-level fields:
 - `_id`: ObjectId
@@ -33,12 +96,12 @@ Top-level fields:
   - `_id`: string — UUID, sometimes ends with `_key` (ignore these)
   - `valuetableId`: UUID — references the type of value stored
   - `refId`: ObjectId — reference back to the source test `_id`
- 
+
 ### UUID References
 - For **Results** (single value per valuecolumn): refer to `TestResultTypes`
 - For **Measurements** (time-series/channel data): refer to `channelParameterMap`
 - `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
- 
+
 ### Query Tips
 - Always use `get_sample_documents` first to verify exact field names before querying
 - Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
@@ -255,7 +318,7 @@ def run_python_analysis(code: str, data_json: str) -> str:
 
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [get_sample_documents, get_aggregated_data_for_chart, run_python_analysis]
+custom_tools = [run_python_analysis]
 tool_node = ToolNode(custom_tools)
 dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
 visualization_tool = ToolNode(dashboard_tools)
@@ -384,7 +447,19 @@ def call_model(state: MessagesState):
     messages = state['messages']
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=system_prompt)] + messages
+    metrics = _message_metrics(messages)
+    logger.warning(
+        "[context-debug] call_model payload: messages=%s total_chars=%s est_tokens=%s per_message_chars=%s",
+        metrics["message_count"],
+        metrics["total_chars"],
+        metrics["total_est_tokens"],
+        metrics["per_message_chars"],
+    )
+    _dump_invoke_context("call_model", messages)
     response = llm_with_tools.invoke(messages)
+    tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    logger.warning("[context-debug] call_model action: %s", action_label)
     return {"messages": [response]}
 
 
@@ -401,7 +476,18 @@ def output_node(state: MessagesState):
         messages = [SystemMessage(content=output_system_prompt)] + messages
     # Claude requires conversation to end with a user message after tool results
     messages = messages + [HumanMessage(content="Given the current conversation, summarize to an answer.")]
+    metrics = _message_metrics(messages)
+    logger.info(
+        "[context-debug] output_node payload: messages=%s total_chars=%s est_tokens=%s",
+        metrics["message_count"],
+        metrics["total_chars"],
+        metrics["total_est_tokens"],
+    )
+    _dump_invoke_context("output_node", messages)
     response = llm_output.invoke(messages)
+    tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    logger.info("[context-debug] output_node action: %s", action_label)
     return {"messages": [response]}
 
 # def self_critic(state: MessagesState):
@@ -424,10 +510,10 @@ def output_node(state: MessagesState):
     #     import json
     #     critique = json.loads(last_message.content)
     #     print("Verdict:", critique["verdict"])
-    #     if critique["verdict"] == "retry": 
+    #     if critique["verdict"] == "retry":
     #         return "output"
     #     else:
-    #         return "output" 
+    #         return "output"
     # except Exception as e:
     #     print("Parse error:", e)
     #     return "output"
@@ -449,8 +535,19 @@ def visualizer(state: MessagesState):
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message
     messages = messages + [HumanMessage(content="Based on the results and the user's request, decide what dashboard actions to take. You can: render new visualizations with render_visualization, remove widgets with remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed.")]
+    metrics = _message_metrics(messages)
+    logger.info(
+        "[context-debug] visualizer payload: messages=%s total_chars=%s est_tokens=%s",
+        metrics["message_count"],
+        metrics["total_chars"],
+        metrics["total_est_tokens"],
+    )
+    _dump_invoke_context("visualizer", messages)
     response = llm_visualizer.invoke(messages)
     print("hi",response)
+    tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    logger.info("[context-debug] visualizer action: %s", action_label)
     return {"messages": [response]}
 
 def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
@@ -510,7 +607,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
 
         system_prompt = """You are an AI material testing assistant with MongoDB database access.
-        
+
         {DB_CONTEXT}
 
         AVAILABLE TOOLS:
@@ -626,6 +723,45 @@ You can reference existing widgets when answering. If the user asks to rearrange
         The chart will be updated in-place instead of creating a new one.
         Example: user says "change that to a bar chart" while a pie chart is selected → set replace_widget_id to that widget's id.""" + similar_data + dashboard_context
 
+        request_metrics = _text_metrics(self.message)
+        similar_metrics = _text_metrics(self.similar_text)
+        dashboard_metrics = _text_metrics(dashboard_context)
+        system_metrics = _text_metrics(system_prompt)
+        output_metrics = _text_metrics(output_system_prompt)
+        visualizer_metrics = _text_metrics(visualizer_system_prompt)
+        logger.info(
+            "[context-debug] prompt build: request_chars=%s similar_chars=%s dashboard_chars=%s widgets=%s",
+            request_metrics["chars"],
+            similar_metrics["chars"],
+            dashboard_metrics["chars"],
+            len(self.dashboard_widgets),
+        )
+        logger.info(
+            "[context-debug] prompt build: system_chars=%s output_chars=%s visualizer_chars=%s",
+            system_metrics["chars"],
+            output_metrics["chars"],
+            visualizer_metrics["chars"],
+        )
+
+        import time
+        import os
+        import json
+        debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts")
+        os.makedirs(debug_dir, exist_ok=True)
+        query_id = str(int(time.time() * 1000))
+        debug_file = os.path.join(debug_dir, f"query_{query_id}.json")
+        try:
+            with open(debug_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "user_message": self.message,
+                    "similar_text": self.similar_text,
+                    "dashboard_widgets": self.dashboard_widgets,
+                    "system_prompt": system_prompt,
+                    "output_system_prompt": output_system_prompt,
+                    "visualizer_system_prompt": visualizer_system_prompt,
+                }, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to dump debug context: {e}")
 
     def build_agent(self):
         """Build the agent graph. Called after MCP tools are initialized."""

@@ -12,6 +12,7 @@ Routes:
 from __future__ import annotations
 
 import json
+import logging
 import requests
 from uuid import uuid4
 
@@ -40,6 +41,7 @@ class SaveWidgetLayoutsRequest(BaseModel):
     layouts: list[WidgetLayout]
 
 router = APIRouter(prefix="/api", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # In-memory stub store (replace with DB later)
@@ -81,6 +83,16 @@ def _get_or_create_session(session_id: str | None) -> Session:
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+
+def _text_metrics(text: str | None) -> dict:
+    value = text or ""
+    chars = len(value)
+    return {
+        "chars": chars,
+        "bytes": len(value.encode("utf-8")),
+        "est_tokens": max(1, round(chars / 4)) if chars else 0,
+    }
+
 def get_similarity_by_query(message: str, session_id):
     try:
         print("Querying")
@@ -91,8 +103,19 @@ def get_similarity_by_query(message: str, session_id):
         })
         print(response.status_code)
         print(response.text)
-        print(response.json()["context"])
-        return response.json()["context"][:100]
+        context = response.json().get("context", "")
+        source_metrics = _text_metrics(context)
+        trimmed_context = context[:100]
+        trimmed_metrics = _text_metrics(trimmed_context)
+        logger.info(
+            "[context-debug] rag context fetched: source_chars=%s source_bytes=%s source_est_tokens=%s returned_chars=%s returned_est_tokens=%s",
+            source_metrics["chars"],
+            source_metrics["bytes"],
+            source_metrics["est_tokens"],
+            trimmed_metrics["chars"],
+            trimmed_metrics["est_tokens"],
+        )
+        return trimmed_context
     except Exception as e:
         print("Exception with rag:", e)
         return ""
@@ -115,19 +138,34 @@ async def chat_stream(req: ChatRequest):
         try:
             from src.agent import Agent
             from langchain_core.messages import HumanMessage
+            request_metrics = _text_metrics(req.message)
+            logger.info(
+                "[context-debug] chat_stream request: chars=%s bytes=%s est_tokens=%s dashboard_widgets=%s",
+                request_metrics["chars"],
+                request_metrics["bytes"],
+                request_metrics["est_tokens"],
+                len(req.dashboard_widgets or []),
+            )
             similar_messages = get_similarity_by_query(req.message, req.session_id)
+            similar_metrics = _text_metrics(similar_messages)
+            logger.info(
+                "[context-debug] chat_stream similar context passed to Agent: chars=%s bytes=%s est_tokens=%s",
+                similar_metrics["chars"],
+                similar_metrics["bytes"],
+                similar_metrics["est_tokens"],
+            )
             dashboard_ctx = [w.model_dump() for w in req.dashboard_widgets] if req.dashboard_widgets else []
             tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
             agent = tmp.create()
             config = {"configurable": {"thread_id": session.session_id}}
-            
+
             full_text = ""
             visualization = None
             visualizations = []
             followups = []
             thinking = []
             query_used = None
-            
+
             async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
                 kind = event["event"]
                 if kind == "on_chat_model_stream":
@@ -137,7 +175,7 @@ async def chat_stream(req: ChatRequest):
                         text = "".join(block.get("text", "") for block in content if block.get("type") == "text")
                     else:
                         text = content
-                    
+
                     if text:
                         full_text += text
                         yield _sse_event("text", {"chunk": text})
@@ -171,7 +209,16 @@ async def chat_stream(req: ChatRequest):
 
                 elif kind == "on_tool_end":
                     tool_name = event["name"]
-                    
+
+                    tool_output = event.get("data", {}).get("output", "")
+                    output_metrics = _text_metrics(str(tool_output))
+                    logger.info(
+                        "[context-debug] tool_end '%s': output_chars=%s output_est_tokens=%s",
+                        tool_name,
+                        output_metrics["chars"],
+                        output_metrics["est_tokens"]
+                    )
+
                     if tool_name == "render_visualization":
                         try:
                             kwargs = event['data'].get("input", {})
@@ -277,15 +324,29 @@ async def chat(req: ChatRequest) -> ChatResponse:
     session.messages.append(Message(role="user", content=req.message))
 
     query = None
-    
+
     from src.agent import Agent
     from langchain_core.messages import HumanMessage
     config = {"configurable": {"thread_id": session.session_id}}
+    request_metrics = _text_metrics(req.message)
+    logger.info(
+        "[context-debug] chat request: chars=%s bytes=%s est_tokens=%s",
+        request_metrics["chars"],
+        request_metrics["bytes"],
+        request_metrics["est_tokens"],
+    )
     similar_messages = get_similarity_by_query(req.message, req.session_id)
+    similar_metrics = _text_metrics(similar_messages)
+    logger.info(
+        "[context-debug] chat similar context passed to Agent: chars=%s bytes=%s est_tokens=%s",
+        similar_metrics["chars"],
+        similar_metrics["bytes"],
+        similar_metrics["est_tokens"],
+    )
     tmp = Agent(req.message, similar_messages)
     agent = tmp.create()
     response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
-    
+
     # Process output
     messages = response['messages']
     print(messages)
@@ -295,7 +356,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # text = ai_msg
     visualization = None
     thinking = []
-    
+
     # Check if render_visualization was called to fetch the block
     for msg in reversed(messages):
         if getattr(msg, "name", None) == "render_visualization":
