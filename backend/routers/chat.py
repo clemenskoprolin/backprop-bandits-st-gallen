@@ -184,6 +184,8 @@ async def chat_stream(req: ChatRequest):
                     tool_name = event["name"]
                     if tool_name == "render_visualization":
                         yield _sse_event("thinking", {"step": "Rendering visualization..."})
+                    elif tool_name == "render_text_block":
+                        yield _sse_event("thinking", {"step": "Creating text block..."})
                     elif tool_name == "run_python_analysis":
                         yield _sse_event("thinking", {"step": "Running statistical analysis..."})
                     elif tool_name == "remove_widget":
@@ -249,6 +251,27 @@ async def chat_stream(req: ChatRequest):
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
                             print("Visualization rendering error:", e)
+
+                    elif tool_name == "render_text_block":
+                        try:
+                            kwargs = event['data'].get("input", {})
+                            text_vis = {
+                                "type": "paragraphs",
+                                "data": {
+                                    "title": kwargs.get("title", ""),
+                                    "content": kwargs.get("content", ""),
+                                },
+                            }
+                            replace_widget_id = kwargs.get("replace_widget_id", "")
+                            if replace_widget_id:
+                                text_vis["replace_widget_id"] = replace_widget_id
+                            widget_size = kwargs.get("widget_size", "")
+                            if widget_size:
+                                text_vis["widget_size"] = widget_size
+                            visualizations.append(text_vis)
+                            yield _sse_event("visualization", text_vis)
+                        except Exception as e:
+                            print("render_text_block error:", e)
 
                     elif tool_name == "remove_widget":
                         try:

@@ -203,6 +203,33 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
     return "Visualization successfully rendered on UI."
 
 @tool
+def render_text_block(title: str, content: str, replace_widget_id: str = "", widget_size: str = "1x2") -> str:
+    """
+    Render a Markdown text block (headlines + paragraphs) on the user's dashboard.
+    Use this for structured analysis summaries, key findings, or explanatory text
+    that genuinely benefits from a persistent dashboard presence.
+
+    Do NOT overuse — only create a text block when the content adds real value
+    beyond the chat answer. Never use it as a replacement for a chart or table.
+
+    Markdown supported in content: ## headings, ### subheadings, paragraphs,
+    **bold**, *italic*, bullet lists, numbered lists.
+
+    Args:
+        title: Short widget title shown in the widget header.
+        content: Markdown body with optional headings and paragraphs.
+            Example: "## Key Findings\\n\\n- Tensile strength within spec\\n- No trend detected\\n\\n### Recommendation\\n\\nContinue monitoring monthly."
+        replace_widget_id: Pass an existing widget's id to update it in-place. Leave empty to create a new widget.
+        widget_size: HxW format (rows x columns):
+            "1x1" — very brief notes or a single key finding
+            "1x2" — standard wide (DEFAULT): most text summaries
+            "2x1" — tall narrow: longer structured reports
+            "2x2" — large square: comprehensive multi-section analysis
+    """
+    return "Text block rendered on dashboard."
+
+
+@tool
 def remove_widget(widget_id: str, reason: str = "") -> str:
     """
     Remove a widget from the user's dashboard.
@@ -320,7 +347,7 @@ def run_python_analysis(code: str, data_json: str) -> str:
 # Custom tools (Recharts-specific, kept alongside MCP tools)
 custom_tools = [run_python_analysis]
 tool_node = ToolNode(custom_tools)
-dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
+dashboard_tools = [render_visualization, render_text_block, remove_widget, reorder_dashboard]
 visualization_tool = ToolNode(dashboard_tools)
 submit_tool = ToolNode([submit_answer])
 
@@ -655,6 +682,9 @@ You can reference existing widgets when answering. If the user asks to rearrange
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
         Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
         You can remove or reorder existing dashboard widgets when the user asks. Use the widget IDs from the CURRENT DASHBOARD STATE.
+
+        Dashboard also supports text/headline widgets via render_text_block (handled in a later step).
+        If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
         """ + similar_data + dashboard_context
 
         output_system_prompt = """You are a material testing AI assistant.
@@ -662,6 +692,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
         2. After your answer, suggest 3 follow-up hypotheses worth investigating if there are any. Don't always force it.
+
+        Dashboard capabilities available to the user:
+        - Charts (bar, line, area, pie, radar, boxplot) for data visualizations
+        - Tables for tabular data
+        - KPI cards for key metrics
+        - Text/headline widgets with Markdown content (summaries, reports, key findings)
+        Never tell the user that text or headline widgets are unsupported — they are fully supported.
         """ + similar_data + be_professional
 
         intermediate_output_system_prompt = """briefly summarize the findings
@@ -725,7 +762,16 @@ You can reference existing widgets when answering. If the user asks to rearrange
         If the user's request is about changing, updating, or modifying a SELECTED widget (marked ⭐),
         pass that widget's id as `replace_widget_id` to render_visualization.
         The chart will be updated in-place instead of creating a new one.
-        Example: user says "change that to a bar chart" while a pie chart is selected → set replace_widget_id to that widget's id.""" + similar_data + dashboard_context
+        Example: user says "change that to a bar chart" while a pie chart is selected → set replace_widget_id to that widget's id.
+
+        TEXT BLOCKS:
+        Use render_text_block when:
+        - The user explicitly asks for a text block, summary, report, or written content on the dashboard, OR
+        - Structured textual content (key findings, analysis summaries, methodology notes) genuinely benefits
+          from being pinned to the dashboard alongside charts.
+        Do NOT create a text block unprompted for every response — only when it adds lasting dashboard value.
+        Never use a text block instead of a chart or table when data visualization is more appropriate.
+        Use Markdown: ## for major sections, ### for subsections, **bold** for emphasis, bullet lists for findings.""" + similar_data + dashboard_context
 
         request_metrics = _text_metrics(self.message)
         similar_metrics = _text_metrics(self.similar_text)

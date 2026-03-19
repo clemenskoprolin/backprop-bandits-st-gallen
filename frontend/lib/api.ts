@@ -100,6 +100,28 @@ export function normalizeVisualization(raw: unknown): Visualization | null {
     return { type: 'cards', widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined, data: data as unknown as import('./types').CardsData }
   }
 
+  if (type === 'paragraphs') {
+    return {
+      type: 'paragraphs',
+      widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined,
+      data: {
+        title: (data.title ?? '') as string,
+        content: (data.content ?? '') as string,
+      },
+    }
+  }
+
+  if (type === 'text') {
+    return {
+      type: 'text',
+      widgetSize: (obj.widget_size ?? obj.widgetSize) as string | undefined,
+      data: {
+        title: (data.title ?? '') as string,
+        content: (data.content ?? '') as string,
+      },
+    }
+  }
+
   return null
 }
 
