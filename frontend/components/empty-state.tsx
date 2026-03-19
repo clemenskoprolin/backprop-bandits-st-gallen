@@ -23,27 +23,27 @@ interface EmptyStateProps {
 
 const suggestions = [
   {
+    icon: SearchIcon,
+    title: 'Query Tests',
+    description: 'Look up tests by customer, tester, or specimen type',
+    category: 'Query',
+  },
+  {
     icon: BarChart3Icon,
     title: 'Compare Materials',
-    description: 'Analyze differences between material types',
+    description: 'Statistically compare two specimen types or testers',
     category: 'Analysis',
   },
   {
     icon: TrendingUpIcon,
-    title: 'Trend Analysis',
-    description: 'Find patterns in your test data',
+    title: 'Trend & Degradation',
+    description: 'Detect trends and check for boundary violations over time',
     category: 'Analysis',
   },
   {
-    icon: SearchIcon,
-    title: 'Find Outliers',
-    description: 'Identify data points outside normal ranges',
-    category: 'Query',
-  },
-  {
     icon: ZapIcon,
-    title: 'Quick Summary',
-    description: 'Get an overview of your test results',
+    title: 'Visualize Distribution',
+    description: 'Chart property distributions and recent test overviews',
     category: 'Visualization',
   },
 ]
