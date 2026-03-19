@@ -261,7 +261,7 @@ export interface StreamCallbacks {
   onThinking?: (step: string) => void
   onQuery?: (query: string) => void
   onText?: (chunk: string) => void
-  onVisualization?: (visualization: Visualization) => void
+  onVisualization?: (visualization: Visualization, replaceWidgetId?: string) => void
   onRemoveWidget?: (widgetId: string) => void
   onReorderDashboard?: (widgetIds: string[]) => void
   onFollowups?: (suggestions: string[]) => void
@@ -274,6 +274,7 @@ export interface DashboardWidgetContext {
   title: string
   chart_type: string
   position: { x: number; y: number; w: number; h: number }
+  selected?: boolean
 }
 
 export async function sendMessageStream(
@@ -355,7 +356,7 @@ export async function sendMessageStream(
               break
             case 'visualization': {
               const vis = normalizeVisualization(parsed)
-              if (vis) callbacks.onVisualization?.(vis)
+              if (vis) callbacks.onVisualization?.(vis, parsed.replace_widget_id || undefined)
               break
             }
             case 'remove_widget':

@@ -27,6 +27,8 @@ interface ChatStore {
   dashboardWidgets: DashboardWidget[]
   /** Widget to swap out once the LLM delivers a visualization to replace it. */
   pendingReplacement: { widgetId: string; x: number; y: number; w: number } | null
+  /** IDs of widgets currently selected as LLM context. */
+  selectedWidgetIds: string[]
   /** Per-session widget cache so positions/sizes survive session switches */
   _sessionWidgetCache: Record<string, DashboardWidget[]>
 
@@ -44,6 +46,9 @@ interface ChatStore {
 
   // Dashboard widget actions
   setPendingReplacement: (replacement: { widgetId: string; x: number; y: number; w: number } | null) => void
+  setSelectedWidgets: (ids: string[]) => void
+  toggleWidgetSelection: (id: string, additive: boolean) => void
+  clearWidgetSelection: () => void
   addWidget: (widget: DashboardWidget) => void
   removeWidget: (widgetId: string) => void
   updateWidget: (widgetId: string, update: Partial<DashboardWidget>) => void
@@ -164,12 +169,13 @@ function getWidgetChartType(widget: DashboardWidget): string {
   return visualization.type
 }
 
-function buildDashboardContext(widgets: DashboardWidget[]): DashboardWidgetContext[] {
+function buildDashboardContext(widgets: DashboardWidget[], selectedIds: string[]): DashboardWidgetContext[] {
   return widgets.map((w) => ({
     id: w.id,
     title: getWidgetTitle(w),
     chart_type: getWidgetChartType(w),
     position: { x: w.layout.x, y: w.layout.y, w: w.layout.w, h: w.layout.h },
+    selected: selectedIds.includes(w.id),
   }))
 }
 
@@ -224,6 +230,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   showDashboard: true,
   dashboardWidgets: [],
   pendingReplacement: null,
+  selectedWidgetIds: [],
   _sessionWidgetCache: {},
 
   loadSessions: async () => {
@@ -387,7 +394,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       })
     }
 
-    const dashboardCtx = buildDashboardContext(get().dashboardWidgets)
+    const dashboardCtx = buildDashboardContext(get().dashboardWidgets, get().selectedWidgetIds)
 
     try {
       await sendMessageStream(currentSession.session_id, content, {
@@ -420,16 +427,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           fullText += chunk
           updateAssistantMessage()
         },
-        onVisualization: (vis) => {
+        onVisualization: (vis, replaceWidgetId) => {
           visualization = vis
           allVisualizations.push(vis)
           updateAssistantMessage()
 
-          // Add widget to dashboard with unique ID per visualization
           if (vis.type !== 'none') {
             vizCounter++
             const widgetMessageId = vizCounter === 1 ? placeholderId : `${placeholderId}_viz${vizCounter}`
-            // On first viz, consume the pending replacement: remove the placeholder and land here
+
+            // Case 1: LLM explicitly asked to replace an existing widget in-place
+            if (replaceWidgetId) {
+              set((state) => ({
+                dashboardWidgets: state.dashboardWidgets.map((w) =>
+                  w.id === replaceWidgetId
+                    ? { ...w, visualization: vis, queryUsed: queryUsed ?? w.queryUsed, isNew: true }
+                    : w
+                ),
+              }))
+              return
+            }
+
+            // Case 2: consume pending replacement (empty-diagram card → new chart)
             const pending = vizCounter === 1 ? get().pendingReplacement : null
             const widget = addVisualizationWidget(get(), vis, widgetMessageId, queryUsed, pending)
             set((state) => ({
@@ -503,7 +522,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
       updateAssistantMessage()
     } finally {
-      set({ isSending: false, isStreaming: false })
+      set({ isSending: false, isStreaming: false, selectedWidgetIds: [] })
     }
   },
 
@@ -514,6 +533,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearCurrentSession: () => set({ currentSession: null, messages: [], dashboardWidgets: [] }),
 
   setPendingReplacement: (replacement) => set({ pendingReplacement: replacement }),
+
+  setSelectedWidgets: (ids) => set({ selectedWidgetIds: ids }),
+  toggleWidgetSelection: (id, additive) => set((state) => {
+    if (additive) {
+      const already = state.selectedWidgetIds.includes(id)
+      return { selectedWidgetIds: already ? state.selectedWidgetIds.filter((x) => x !== id) : [...state.selectedWidgetIds, id] }
+    }
+    // Non-additive: select only this one, or deselect if it was the only one
+    const onlyThis = state.selectedWidgetIds.length === 1 && state.selectedWidgetIds[0] === id
+    return { selectedWidgetIds: onlyThis ? [] : [id] }
+  }),
+  clearWidgetSelection: () => set({ selectedWidgetIds: [] }),
 
   addWidget: (widget: DashboardWidget) =>
     set((state) => ({ dashboardWidgets: [...state.dashboardWidgets, widget] })),

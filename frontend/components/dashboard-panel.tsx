@@ -823,7 +823,18 @@ function FullscreenWidget({
   onClose: () => void
   onDownload: () => void
 }) {
+  const { sendUserMessage, setSelectedWidgets } = useChatStore()
+  const [prompt, setPrompt] = useState('')
+
   if (!widget) return null
+
+  const handleSend = () => {
+    if (!prompt.trim()) return
+    setSelectedWidgets([widget.id])
+    sendUserMessage(prompt.trim())
+    setPrompt('')
+    onClose()
+  }
 
   const getTitle = () => {
     const { visualization } = widget
@@ -874,6 +885,24 @@ function FullscreenWidget({
             </pre>
           </div>
         )}
+        <div className="border-t pt-3">
+          <div className="flex gap-2 items-center">
+            <div className="flex-1 relative">
+              <input
+                className="w-full rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary pr-10"
+                placeholder="Ask something about this chart…"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleSend() }}
+                autoFocus
+              />
+            </div>
+            <Button size="sm" onClick={handleSend} disabled={!prompt.trim()} className="shrink-0">
+              Ask
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5">This chart will be set as context for your question.</p>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -990,7 +1019,7 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
 type FabDragType = 'text' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
-  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement } = useChatStore()
+  const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage, setPendingReplacement, pendingReplacement, selectedWidgetIds, toggleWidgetSelection, clearWidgetSelection, setSelectedWidgets } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
@@ -1067,6 +1096,9 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   } | null>(null)
   const [fabOpen, setFabOpen] = useState(false)
   const [fabDragVisual, setFabDragVisual] = useState<{ type: FabDragType; x: number; y: number } | null>(null)
+  const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const selectionBoxRef = useRef<{ startX: number; startY: number; scrollTop: number } | null>(null)
+  const selectionBoxValueRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
 
   // Stable ref wrappers for store actions (Zustand actions are stable, but refs are safer in effects)
   const addWidgetRef = useRef(addWidget)
@@ -1103,6 +1135,10 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
   const rowHeightsRef = useRef<Map<number, number>>(rowHeights)
   rowHeightsRef.current = rowHeights
+  const layoutMapRef = useRef(layoutMap)
+  layoutMapRef.current = layoutMap
+  const setSelectedWidgetsRef = useRef(setSelectedWidgets)
+  setSelectedWidgetsRef.current = setSelectedWidgets
 
   // ── Drag handle ──
   const handleDragHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
@@ -1186,6 +1222,27 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         setResizeVisual({ widgetId: resize.widgetId, width: newWidth })
       }
 
+      // ── Rubber-band selection ──
+      if (selectionBoxRef.current) {
+        const sb = selectionBoxRef.current
+        const gridEl = gridAreaRef.current
+        if (gridEl) {
+          const rect = gridEl.getBoundingClientRect()
+          const scrollViewport = gridEl.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
+          const scrollTop = scrollViewport?.scrollTop ?? 0
+          const x = e.clientX - rect.left - 16
+          const y = e.clientY - rect.top + scrollTop - 16
+          const newBox = {
+            x1: Math.min(sb.startX, x),
+            y1: Math.min(sb.startY, y),
+            x2: Math.max(sb.startX, x),
+            y2: Math.max(sb.startY, y),
+          }
+          setSelectionBox(newBox)
+          selectionBoxValueRef.current = newBox
+        }
+      }
+
       // ── FAB drag ghost (activate after 8px threshold) ──
       if (fabDragRef.current) {
         const fab = fabDragRef.current
@@ -1236,6 +1293,29 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         }
         resizeRef.current = null
         setResizeVisual(null)
+      }
+
+      // ── Finish rubber-band selection ──
+      if (selectionBoxRef.current) {
+        const box = selectionBoxValueRef.current
+        selectionBoxRef.current = null
+        setSelectionBox(null)
+        selectionBoxValueRef.current = null
+        if (box && (box.x2 - box.x1 > 5 || box.y2 - box.y1 > 5)) {
+          const selected: string[] = []
+          for (const widget of widgetsRef.current) {
+            const placement = layoutMapRef.current?.get(widget.id)
+            if (!placement) continue
+            const wx1 = toPixelX(placement.x)
+            const wy1 = pixelYFromRows(placement.y, rowHeightsRef.current)
+            const wx2 = wx1 + itemWidth(placement.w)
+            const wy2 = wy1 + getWidgetPixelHeight(widget, placement.h)
+            if (wx1 < box.x2 && wx2 > box.x1 && wy1 < box.y2 && wy2 > box.y1) {
+              selected.push(widget.id)
+            }
+          }
+          if (selected.length > 0) setSelectedWidgetsRef.current(selected)
+        }
       }
 
       // ── Finish FAB drag — place widget on grid or treat as click ──
@@ -1410,6 +1490,14 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             {dashboardWidgets.length} widget{dashboardWidgets.length !== 1 ? 's' : ''}
           </p>
         </div>
+        {selectedWidgetIds.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{selectedWidgetIds.length} selected</span>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => clearWidgetSelection()}>
+              Clear
+            </Button>
+          </div>
+        )}
         {dashboardWidgets.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1430,7 +1518,21 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
       {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
-        <div ref={gridAreaRef} className={cn('p-4', isDragging && 'cursor-grabbing')}>
+        <div
+          ref={gridAreaRef}
+          className={cn('p-4', isDragging && 'cursor-grabbing')}
+          onPointerDown={(e) => {
+            const target = e.target as HTMLElement
+            if (target.closest('[data-widget-id]')) return
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            const scrollViewport = (e.currentTarget as HTMLElement).closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
+            const scrollTop = scrollViewport?.scrollTop ?? 0
+            const x = e.clientX - rect.left - 16
+            const y = e.clientY - rect.top + scrollTop - 16
+            selectionBoxRef.current = { startX: x, startY: y, scrollTop }
+            if (!e.shiftKey) clearWidgetSelection()
+          }}
+        >
           {dashboardWidgets.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="rounded-full bg-muted p-4 mb-4">
@@ -1443,6 +1545,21 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             </div>
           ) : (
             <div ref={gridRef} style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
+              {/* Rubber-band selection overlay */}
+              {selectionBox && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: selectionBox.x1,
+                    top: selectionBox.y1,
+                    width: selectionBox.x2 - selectionBox.x1,
+                    height: selectionBox.y2 - selectionBox.y1,
+                    pointerEvents: 'none',
+                    zIndex: 20,
+                  }}
+                  className="border border-primary bg-primary/10 rounded"
+                />
+              )}
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
                 const isBeingResized = resizeVisual?.widgetId === widget.id
@@ -1458,6 +1575,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                 return (
                   <div
                     key={widget.id}
+                    data-widget-id={widget.id}
                     style={{
                       position: 'absolute',
                       transform: `translate(${px}px, ${py}px)`,
@@ -1466,12 +1584,17 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                       transition: isBeingDragged || isBeingResized ? 'none' : 'transform 200ms ease, width 200ms ease',
                       zIndex: isBeingDragged ? 10 : 1,
                     }}
+                    className={cn(selectedWidgetIds.includes(widget.id) && 'ring-2 ring-primary ring-offset-1 ring-offset-background rounded-xl')}
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('button, input, a, [role="button"]')) return
+                      toggleWidgetSelection(widget.id, e.shiftKey)
+                    }}
                   >
                     <DashboardWidgetCard
                       widget={widget}
                       isNew={widget.isNew}
                       onRemove={() => removeWidget(widget.id)}
-                      onMaximize={() => setFullscreenWidget(widget)}
+                      onMaximize={() => { setFullscreenWidget(widget); setSelectedWidgets([widget.id]) }}
                       onDownload={() => handleDownload(widget)}
                       onDragHandleDown={(e) => handleDragHandleDown(widget.id, e)}
                       onUpdateVisualizationData={(data) =>

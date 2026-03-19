@@ -192,6 +192,9 @@ async def chat_stream(req: ChatRequest):
                                     "chartConfig": chart_config,
                                 },
                             }
+                            replace_widget_id = kwargs.get("replace_widget_id", "")
+                            if replace_widget_id:
+                                visualization["replace_widget_id"] = replace_widget_id
                             visualizations.append(visualization)
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
