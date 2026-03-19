@@ -225,8 +225,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - When using `find`, ALWAYS set a `limit` (max 50) and use `projection` to select only the fields you need.
 
         DATA FLOW — SIDE-CHANNEL STORAGE:
-        Large query results are automatically stored server-side to keep the conversation compact.
-        When this happens, the tool result you see is a SUMMARY containing:
+        All JSON query results are stored server-side and assigned a `data_id`.
+        - Small JSON results are shown in full and include `data_id`.
+        - Large JSON results are summarized in-context and include `data_id`.
+        For summarized results, the tool result you see is a SUMMARY containing:
         - `data_id`: a short ID referencing the full stored dataset
         - `total_documents`: how many documents were returned
         - `document_structure` / `structure`: the shape of the data (keys, types, sample values, truncated lists)
@@ -469,20 +471,24 @@ You can reference existing widgets when answering. If the user asks to rearrange
         # ---- Graph node closures (capture self's prompts and tools) ----
 
         async def _tools_with_side_channel(state: MessagesState):
-            """Run tools, store large results in side channel, return compact summaries."""
+            """Run tools, always persist JSON results, summarize only large JSON payloads."""
             result = await self._tool_node.ainvoke(state)
             for msg in result.get("messages", []):
                 if not (hasattr(msg, "content") and isinstance(msg.content, str)):
                     continue
                 content = msg.content
-                if len(content) <= MAX_TOOL_RESULT_CHARS:
-                    continue
                 # Try to parse as JSON and store in side channel
                 try:
                     parsed = json.loads(content)
                     if isinstance(parsed, (list, dict)):
                         did = uuid4().hex[:8]
                         data_store[did] = content
+
+                        # Keep small JSON results fully in-context and also expose data_id.
+                        if len(content) <= MAX_TOOL_RESULT_CHARS:
+                            msg.content = json.dumps({"data_id": did, "data": parsed}, default=str)
+                            print(f"[side-channel] Stored inline JSON as data_id={did} ({len(content)} chars)")
+                            continue
 
                         summary = {"data_id": did}
                         if isinstance(parsed, list):
@@ -504,6 +510,8 @@ You can reference existing widgets when answering. If the user asks to rearrange
                         continue
                 except (json.JSONDecodeError, TypeError):
                     pass
+                if len(content) <= MAX_TOOL_RESULT_CHARS:
+                    continue
                 # Fallback: plain truncation for non-JSON large results
                 original_len = len(content)
                 msg.content = content[:MAX_TOOL_RESULT_CHARS] + (
