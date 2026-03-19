@@ -1172,13 +1172,16 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   } | null>(null)
   const [dragVisual, setDragVisual] = useState<{ widgetId: string; px: number; py: number } | null>(null)
 
-  // ── Resize state (width only) ──
+  // ── Resize state (width, height, or both) ──
   const resizeRef = useRef<{
     widgetId: string
+    mode: 'width' | 'height' | 'both'
     startPointerX: number
-    startW: number
+    startPointerY: number
+    startW: number   // pixel width
+    startH: number   // pixel height
   } | null>(null)
-  const [resizeVisual, setResizeVisual] = useState<{ widgetId: string; width: number } | null>(null)
+  const [resizeVisual, setResizeVisual] = useState<{ widgetId: string; width: number; height: number } | null>(null)
 
   // ── FAB drag state ──
   const fabDragRef = useRef<{
@@ -1251,19 +1254,26 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     setDragVisual({ widgetId, px, py })
   }, [layoutMap])
 
-  // ── Resize handle (width only — right edge or bottom-right corner) ──
-  const handleResizeHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
+  // ── Resize handle (width, height, or both) ──
+  const handleResizeHandleDown = useCallback((widgetId: string, mode: 'width' | 'height' | 'both', e: React.PointerEvent) => {
     e.preventDefault()
     e.stopPropagation()
     const widget = widgetsRef.current.find((w) => w.id === widgetId)
     if (!widget) return
+    const placement = layoutMapRef.current.get(widgetId)
     const w = Math.min(widget.layout.w, colsRef.current)
+    const h = placement?.h ?? widget.layout.h ?? 1
+    const pixW = itemWidth(w)
+    const pixH = getWidgetPixelHeight(widget, h)
     resizeRef.current = {
       widgetId,
+      mode,
       startPointerX: e.clientX,
-      startW: itemWidth(w),
+      startPointerY: e.clientY,
+      startW: pixW,
+      startH: pixH,
     }
-    setResizeVisual({ widgetId, width: itemWidth(w) })
+    setResizeVisual({ widgetId, width: pixW, height: pixH })
   }, [])
 
   // ── Global pointer move / up ──
@@ -1308,11 +1318,16 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         }
       }
 
-      // ── Resize (width only) ──
+      // ── Resize ──
       if (resizeRef.current) {
         const resize = resizeRef.current
-        const newWidth = Math.max(COLUMN_WIDTH / 2, resize.startW + (e.clientX - resize.startPointerX))
-        setResizeVisual({ widgetId: resize.widgetId, width: newWidth })
+        const newWidth = resize.mode !== 'height'
+          ? Math.max(COLUMN_WIDTH / 2, resize.startW + (e.clientX - resize.startPointerX))
+          : resize.startW
+        const newHeight = resize.mode !== 'width'
+          ? Math.max(ROW_HEIGHT / 2, resize.startH + (e.clientY - resize.startPointerY))
+          : resize.startH
+        setResizeVisual({ widgetId: resize.widgetId, width: newWidth, height: newHeight })
       }
 
       // ── Rubber-band selection ──
@@ -1374,15 +1389,21 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         setDragVisual(null)
       }
 
-      // ── Finish resize — snap to 1 or 2 columns ──
+      // ── Finish resize — snap width to 1‒2 cols, height to 1‒2 rows ──
       if (resizeRef.current) {
         const resize = resizeRef.current
         const c = colsRef.current
-        const finalWidth = resize.startW + (e.clientX - resize.startPointerX)
-        const snappedW = finalWidth > COLUMN_WIDTH * 1.5 ? Math.min(2, c) : 1
         const widget = widgetsRef.current.find((w) => w.id === resize.widgetId)
         if (widget) {
-          updateWidgetLayouts([{ id: resize.widgetId, layout: { ...widget.layout, w: snappedW } }])
+          const finalWidth = resize.startW + (e.clientX - resize.startPointerX)
+          const finalHeight = resize.startH + (e.clientY - resize.startPointerY)
+          const snappedW = resize.mode !== 'height'
+            ? (finalWidth > COLUMN_WIDTH * 1.5 ? Math.min(2, c) : 1)
+            : widget.layout.w
+          const snappedH = resize.mode !== 'width'
+            ? (finalHeight > ROW_HEIGHT * 1.5 ? 2 : 1)
+            : (widget.layout.h ?? 1)
+          updateWidgetLayouts([{ id: resize.widgetId, layout: { ...widget.layout, w: snappedW, h: snappedH } }])
         }
         resizeRef.current = null
         setResizeVisual(null)
@@ -1658,6 +1679,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
                 const isBeingResized = resizeVisual?.widgetId === widget.id
+                const isHeadlineWidget = widget.visualization.type === 'text'
                 const placement = layoutMap.get(widget.id)
 
                 const px = isBeingDragged ? dragVisual.px : toPixelX(placement?.x ?? widget.layout.x)
@@ -1665,7 +1687,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                 const displayW = placement?.w ?? Math.min(widget.layout.w, cols)
                 const displayH = placement?.h ?? (widget.layout.h ?? 1)
                 const w = isBeingResized ? resizeVisual.width : itemWidth(displayW)
-                const h = getWidgetPixelHeight(widget, displayH)
+                const h = isBeingResized ? resizeVisual.height : getWidgetPixelHeight(widget, displayH)
 
                 return (
                   <div
@@ -1704,20 +1726,29 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                       }
                       isWorking={pendingReplacement?.widgetId === widget.id}
                     />
-                    {/* Resize handle — right edge */}
-                    {cols >= 2 && (
+                    {/* Resize handle — right edge (width only) */}
+                    {cols >= 2 && !isHeadlineWidget && (
                       <div
                         className="absolute right-0 top-0 w-3 h-full cursor-ew-resize flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-                        onPointerDown={(e) => handleResizeHandleDown(widget.id, e)}
+                        onPointerDown={(e) => handleResizeHandleDown(widget.id, 'width', e)}
                       >
                         <div className="w-1 h-6 rounded border-r-2 border-border" />
                       </div>
                     )}
-                    {/* Resize handle — bottom-right corner */}
-                    {cols >= 2 && (
+                    {/* Resize handle — bottom edge (height only) */}
+                    {!isHeadlineWidget && (
+                      <div
+                        className="absolute bottom-0 left-0 h-3 w-full cursor-ns-resize flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
+                        onPointerDown={(e) => handleResizeHandleDown(widget.id, 'height', e)}
+                      >
+                        <div className="h-1 w-6 rounded border-b-2 border-border" />
+                      </div>
+                    )}
+                    {/* Resize handle — bottom-right corner (both) */}
+                    {cols >= 2 && !isHeadlineWidget && (
                       <div
                         className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize opacity-0 hover:opacity-100 transition-opacity z-10"
-                        onPointerDown={(e) => handleResizeHandleDown(widget.id, e)}
+                        onPointerDown={(e) => handleResizeHandleDown(widget.id, 'both', e)}
                       >
                         <svg width="20" height="20" viewBox="0 0 20 20" className="text-muted-foreground/60">
                           <path d="M17 5 L5 17" stroke="currentColor" strokeWidth="1.5" fill="none" />
