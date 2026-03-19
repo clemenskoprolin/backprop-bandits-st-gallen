@@ -184,8 +184,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
     
     # Process output
     messages = response['messages']
-    ai_msg = messages[-1]
-    text = ai_msg.content
+    # ai_msg = messages[-1]
+    # text = ai_msg.content
+    ai_msg = messages
+    text = ai_msg
     visualization = None
     thinking = []
     

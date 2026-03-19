@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -32,8 +32,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     session_id: str
     message_id: str
-    text: str
-    visualization: VisualizationBlock
+    text: Union[str,list]
+    visualization: VisualizationBlock | None = None
     followups: list[str] = Field(default_factory=list)
     query_used: str | None = None
     thinking: list[str] = Field(default_factory=list)
@@ -47,7 +47,7 @@ class ChatResponse(BaseModel):
 class Message(BaseModel):
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     role: Literal["user", "assistant"]
-    content: str
+    content: Union[str,list]
     visualization: VisualizationBlock | None = None
     query_used: str | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)

@@ -2,10 +2,12 @@ import json
 from typing import Literal
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
-
+from dotenv import load_dotenv
 from src import db
+load_dotenv()
 
 @tool
 async def get_test(test_id: str) -> str:
@@ -31,8 +33,8 @@ async def search_tests(app_type: str = None, state: str = None, limit: int = 10)
 
 @tool
 async def get_aggregated_data_for_chart(
-    group_by_field: str, 
-    aggregations: str, 
+    group_by_field: str,
+    aggregations: str,
     match_filters: str = None
 ) -> str:
     """
@@ -71,7 +73,7 @@ def render_visualization(chart_type: str, title: str, x_label: str, y_label: str
 tools = [get_test, search_tests, get_aggregated_data_for_chart, render_visualization]
 tool_node = ToolNode(tools)
 
-llm = ChatOpenAI(model="gpt-4o", temperature=0)
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
 llm_with_tools = llm.bind_tools(tools)
 
 system_prompt = """You are Backprop Bandits, an AI material testing assistant. You have access to a MongoDB test results database.
@@ -79,6 +81,8 @@ You can query for individual test records or search for subsets of tests.
 If the user wants aggregates or statistics, use `get_aggregated_data_for_chart` which uses MongoDB aggregations.
 If the user asks to visualize the data, ALWAYS call the `render_visualization` tool to show it to them.
 """
+
+output_system_prompt = "Use the previous agent history to make a good summary for the user"
 
 def call_model(state: MessagesState):
     messages = state["messages"]
@@ -96,12 +100,23 @@ def should_continue(state: MessagesState) -> Literal["tools", END]:
         return "tools"
     return END
 
+def output_node(state: MessagesState):
+    messages = state["messages"]
+    if not messages or messages[0].type != "system":
+        from langchain_core.messages import SystemMessage
+        messages = [SystemMessage(content=output_system_prompt)] + messages
+        
+    response = llm_with_tools.invoke(messages)
+    return {"messages": [response]}
+
 graph_builder = StateGraph(MessagesState)
 graph_builder.add_node("agent", call_model)
 graph_builder.add_node("tools", tool_node)
+graph_builder.add_node("output", output_node)
 graph_builder.add_edge(START, "agent")
 graph_builder.add_conditional_edges("agent", should_continue)
-graph_builder.add_edge("tools", "agent")
+graph_builder.add_edge("tools", "output")
+graph_builder.add_edge("output", END)
 
 from langgraph.checkpoint.memory import MemorySaver
 
