@@ -386,54 +386,128 @@ function FullscreenWidget({
   )
 }
 
+// Fixed pixel width per grid column — widgets stay this size and reflow as the container grows
+const COLUMN_WIDTH = 340
+const GRID_GAP = 16
+const ROW_HEIGHT = 240
+
+/**
+ * Find which layout item's pre-drag center falls inside `target`'s bounds.
+ * Returns undefined when the dragged item isn't covering anyone.
+ */
+function findDisplaced(items: Layout[], targetId: string, target: { x: number; y: number; w: number; h: number }) {
+  return items.find((item) => {
+    if (item.i === targetId) return false
+    const cx = item.x + item.w / 2
+    const cy = item.y + item.h / 2
+    return cx >= target.x && cx < target.x + target.w &&
+           cy >= target.y && cy < target.y + target.h
+  })
+}
+
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
   const { dashboardWidgets, removeWidget, updateWidgetLayouts, setShowDashboard } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Swap-during-drag refs — we mutate these so react-grid-layout doesn't fight us
+  // currentLayoutRef = the "truth" that evolves as swaps happen during the drag
+  const currentLayoutRef = useRef<Layout[]>([])
+  const dragOriginRef = useRef<{ i: string; x: number; y: number } | null>(null)
+  const lastSwapTargetRef = useRef<string | null>(null)
+
   // Measure container width
   useEffect(() => {
     if (!containerRef.current) return
-    
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setContainerWidth(entry.contentRect.width)
       }
     })
-    
     observer.observe(containerRef.current)
     return () => observer.disconnect()
   }, [])
 
-  // Convert widgets to grid layout - using 2 columns for coarser grid
-  const layout: Layout[] = useMemo(() => 
+  // Responsive column count based on container width
+  const cols = useMemo(() => Math.max(1, Math.floor((containerWidth + GRID_GAP) / (COLUMN_WIDTH + GRID_GAP))), [containerWidth])
+
+  // Grid pixel width so react-grid-layout renders cells at ~COLUMN_WIDTH
+  const gridWidth = cols * COLUMN_WIDTH + (cols - 1) * GRID_GAP
+
+  // Convert widgets to grid layout
+  const storeLayout: Layout[] = useMemo(() =>
     dashboardWidgets.map((w) => ({
       i: w.id,
       x: w.layout.x,
       y: w.layout.y,
-      w: w.layout.w,
+      w: Math.min(w.layout.w, cols),
       h: w.layout.h,
       minW: 1,
       minH: 1,
-      maxW: 2,
+      maxW: cols,
       maxH: 3,
     })),
-    [dashboardWidgets]
+    [dashboardWidgets, cols]
   )
 
-  const handleLayoutChange = useCallback((newLayout: Layout[]) => {
+  const commitLayout = useCallback((newLayout: Layout[]) => {
     const updates = newLayout.map((item) => ({
       id: item.i,
-      layout: {
-        x: item.x,
-        y: item.y,
-        w: item.w,
-        h: item.h,
-      },
+      layout: { x: item.x, y: item.y, w: item.w, h: item.h },
     }))
     updateWidgetLayouts(updates)
   }, [updateWidgetLayouts])
+
+  // ── Drag handlers — immediate swap by committing to the store during drag ──
+
+  const handleDragStart = useCallback((_layout: Layout[], oldItem: Layout) => {
+    currentLayoutRef.current = storeLayout.map((item) => ({ ...item }))
+    dragOriginRef.current = { i: oldItem.i, x: oldItem.x, y: oldItem.y }
+    lastSwapTargetRef.current = null
+  }, [storeLayout])
+
+  const handleDrag = useCallback((_layout: Layout[], _oldItem: Layout, newItem: Layout) => {
+    const current = currentLayoutRef.current
+    const origin = dragOriginRef.current
+    if (!current.length || !origin) return
+
+    const displaced = findDisplaced(current, newItem.i, newItem)
+
+    // No overlap or same target as last time — nothing to do
+    if (!displaced || displaced.i === lastSwapTargetRef.current) return
+
+    // Perform the swap: displaced item goes to where the dragged item currently lives
+    // in our truth (= origin, which we update after each swap)
+    const swapped = current.map((item) => {
+      if (item.i === displaced.i) return { ...item, x: origin.x, y: origin.y }
+      return { ...item }
+    })
+
+    // Update the origin to the displaced item's old position (so the next swap
+    // knows where "home" is for the dragged item's new implicit slot)
+    dragOriginRef.current = { i: origin.i, x: displaced.x, y: displaced.y }
+    currentLayoutRef.current = swapped
+    lastSwapTargetRef.current = displaced.i
+
+    // Commit immediately — this causes a re-render with the swapped positions
+    commitLayout(swapped)
+  }, [commitLayout])
+
+  const handleDragStop = useCallback((_currentLayout: Layout[], _oldItem: Layout, newItem: Layout) => {
+    const current = currentLayoutRef.current
+    if (!current.length) return
+
+    // Commit the dragged item's final resting position
+    const final = current.map((item) =>
+      item.i === newItem.i ? { ...item, x: newItem.x, y: newItem.y } : item
+    )
+    commitLayout(final)
+
+    currentLayoutRef.current = []
+    dragOriginRef.current = null
+    lastSwapTargetRef.current = null
+  }, [commitLayout])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
     const data = widget.visualization.data
@@ -447,8 +521,6 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }, [])
-
-  const rowHeight = 240
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -508,17 +580,19 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           ) : (
             <GridLayout
               className="layout"
-              layout={layout}
-              cols={2}
-              rowHeight={rowHeight}
-              width={containerWidth - 32}
-              onLayoutChange={handleLayoutChange}
+              layout={storeLayout}
+              cols={cols}
+              rowHeight={ROW_HEIGHT}
+              width={gridWidth}
+              onDragStart={handleDragStart}
+              onDrag={handleDrag}
+              onDragStop={handleDragStop}
               draggableHandle=".drag-handle"
-              compactType="horizontal"
+              compactType={null}
               preventCollision={false}
-              isResizable={true}
+              isResizable={false}
               isDraggable={true}
-              margin={[16, 16]}
+              margin={[GRID_GAP, GRID_GAP]}
               containerPadding={[0, 0]}
               useCSSTransforms={true}
             >

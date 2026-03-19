@@ -91,7 +91,7 @@ export function SessionSidebar() {
             </Tooltip>
           </div>
           <SidebarGroupContent>
-            <SidebarMenu className="gap-1">
+            <SidebarMenu className="gap-1.5">
               {sessions.map((session) => {
                 const isActive = currentSession?.session_id === session.session_id
                 return (

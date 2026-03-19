@@ -82,13 +82,13 @@ export interface FeedbackPayload {
   comment?: string
 }
 
-// Widget sizes: small (1x1), medium (2x1), large (2x1) in a 2-column grid
+// Widget sizes in a responsive grid (cols computed from container width)
 export type WidgetSize = 'small' | 'medium' | 'large'
 
 export const WIDGET_SIZE_CONFIG: Record<WidgetSize, { w: number; h: number }> = {
-  small: { w: 1, h: 1 },   // Square, quarter width
+  small: { w: 1, h: 1 },   // Half width
   medium: { w: 1, h: 1 },  // Half width
-  large: { w: 2, h: 1 },   // Full width
+  large: { w: 1, h: 1 },   // Half width (two fit side-by-side)
 }
 
 // Dashboard widget system

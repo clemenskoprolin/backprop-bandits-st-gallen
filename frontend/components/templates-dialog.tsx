@@ -40,6 +40,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 interface TemplatesDialogProps {
   onSelectTemplate: (prompt: string) => void
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  initialCategory?: string | null
 }
 
 function TemplateCard({
@@ -268,11 +271,24 @@ function TemplateCard({
   )
 }
 
-export function TemplatesDialog({ onSelectTemplate }: TemplatesDialogProps) {
+export function TemplatesDialog({ onSelectTemplate, open: controlledOpen, onOpenChange, initialCategory }: TemplatesDialogProps) {
   const { templates, loadTemplates } = useChatStore()
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (v: boolean) => {
+    onOpenChange?.(v)
+    setInternalOpen(v)
+  }
+
+  // Apply initial category when dialog opens
+  useEffect(() => {
+    if (open && initialCategory !== undefined) {
+      setSelectedCategory(initialCategory ?? null)
+    }
+  }, [open, initialCategory])
 
   useEffect(() => {
     loadTemplates()
