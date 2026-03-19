@@ -639,6 +639,18 @@ function DashboardWidgetCard({
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
   const isManual = isText || isEmptyDiagram
 
+  // Measure header container width for dynamic font sizing
+  const headerContainerRef = useRef<HTMLDivElement>(null)
+  const [headerWidth, setHeaderWidth] = useState(0)
+  useEffect(() => {
+    if (!isText) return
+    const el = headerContainerRef.current
+    if (!el) return
+    const obs = new ResizeObserver(([entry]) => setHeaderWidth(entry.contentRect.width))
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [isText])
+
   // Editable headline state for text widgets
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(
@@ -689,10 +701,17 @@ function DashboardWidgetCard({
     return 'Visualization'
   }
 
+  // Dynamic font size for text widgets: shrinks to fit, min 12px, then truncates
+  // Use live titleDraft while editing so font updates as the user types
+  const textTitle = isText ? (editingTitle ? titleDraft : getTitle()) : ''
+  const dynamicFontSize = isText && headerWidth > 0
+    ? Math.max(12, Math.min(28, (headerWidth - 80) / Math.max(textTitle.length, 1) * 1.8))
+    : 28
+
   return (
     <Card className={`h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none group ${isNew ? 'ring-2 ring-primary/60 animate-pulse' : ''}`}>
       <CardHeader className={cn('shrink-0 border-b border-border/30', isText ? 'py-2 px-2 flex-1' : isManual ? 'py-1 px-2' : 'py-1.5 px-3')}>
-        <div className={cn('flex items-center gap-1.5 overflow-hidden', isText && 'h-full')}>
+        <div ref={headerContainerRef} className={cn('flex items-center gap-1.5 overflow-hidden', isText && 'h-full')}>
           <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-0.5 rounded hover:bg-muted transition-colors shrink-0" onPointerDown={onDragHandleDown}>
             <GripVerticalIcon className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
@@ -702,7 +721,7 @@ function DashboardWidgetCard({
             editingTitle ? (
               <input
                 className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 p-0 font-bold leading-tight"
-                style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                style={{ fontSize: `${dynamicFontSize}px`, transition: 'font-size 100ms ease' }}
                 value={titleDraft}
                 onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={commitTitle}
@@ -711,12 +730,12 @@ function DashboardWidgetCard({
               />
             ) : (
               <div
-                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer"
+                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer overflow-hidden"
                 onClick={() => { setTitleDraft(getTitle()); setEditingTitle(true) }}
               >
                 <span
                   className="font-bold leading-tight truncate text-foreground"
-                  style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                  style={{ fontSize: `${dynamicFontSize}px`, transition: 'font-size 100ms ease' }}
                 >
                   {getTitle()}
                 </span>
