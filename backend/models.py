@@ -26,9 +26,18 @@ class VisualizationBlock(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class DashboardWidgetContext(BaseModel):
+    """Lightweight description of a dashboard widget for LLM context."""
+    id: str
+    title: str = ""
+    chart_type: str = ""
+    position: dict[str, int] = Field(default_factory=dict)  # x, y, w, h
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None  # omit to start a new session
+    dashboard_widgets: list[DashboardWidgetContext] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

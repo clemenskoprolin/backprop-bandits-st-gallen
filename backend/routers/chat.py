@@ -102,7 +102,8 @@ async def chat_stream(req: ChatRequest):
             from src.agent import Agent
             from langchain_core.messages import HumanMessage
             similar_messages = get_similarity_by_query(req.message, req.session_id)
-            tmp = Agent(req.message, similar_messages)
+            dashboard_ctx = [w.model_dump() for w in req.dashboard_widgets] if req.dashboard_widgets else []
+            tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
             agent = tmp.create()
             config = {"configurable": {"thread_id": session.session_id}}
             
@@ -132,6 +133,10 @@ async def chat_stream(req: ChatRequest):
                         yield _sse_event("thinking", {"step": "Rendering visualization..."})
                     elif tool_name == "run_python_analysis":
                         yield _sse_event("thinking", {"step": "Running statistical analysis..."})
+                    elif tool_name == "remove_widget":
+                        yield _sse_event("thinking", {"step": "Removing widget from dashboard..."})
+                    elif tool_name == "reorder_dashboard":
+                        yield _sse_event("thinking", {"step": "Reordering dashboard..."})
                     elif tool_name == "submit_answer":
                         pass  # don't show this as a thinking step
                     else:
@@ -165,6 +170,25 @@ async def chat_stream(req: ChatRequest):
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
                             print("Visualization rendering error:", e)
+
+                    elif tool_name == "remove_widget":
+                        try:
+                            kwargs = event['data'].get("input", {})
+                            widget_id = kwargs.get("widget_id", "")
+                            if widget_id:
+                                yield _sse_event("remove_widget", {"widget_id": widget_id})
+                        except Exception as e:
+                            print("remove_widget error:", e)
+
+                    elif tool_name == "reorder_dashboard":
+                        try:
+                            kwargs = event['data'].get("input", {})
+                            widget_ids = kwargs.get("widget_ids", [])
+                            print(f"[reorder_dashboard] widget_ids={widget_ids}")
+                            if widget_ids:
+                                yield _sse_event("reorder_dashboard", {"widget_ids": widget_ids})
+                        except Exception as e:
+                            print("reorder_dashboard error:", e)
 
                     elif tool_name == "submit_answer":
                         try:

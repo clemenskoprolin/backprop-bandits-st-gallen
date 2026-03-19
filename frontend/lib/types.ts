@@ -108,4 +108,6 @@ export interface DashboardWidget {
     h: number
   }
   queryUsed?: string | null
+  /** Set to true when the widget is newly created or updated by the LLM */
+  isNew?: boolean
 }

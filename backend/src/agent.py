@@ -100,6 +100,32 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
     return "Visualization successfully rendered on UI."
 
 @tool
+def remove_widget(widget_id: str, reason: str = "") -> str:
+    """
+    Remove a widget from the user's dashboard.
+    Use this when the user asks to remove, delete, or clear a specific chart/widget.
+
+    Args:
+        widget_id: The widget ID to remove (from the CURRENT DASHBOARD STATE context).
+        reason: Brief reason for removal.
+    """
+    return f"Widget {widget_id} removed from dashboard."
+
+
+@tool
+def reorder_dashboard(widget_ids: list[str]) -> str:
+    """
+    Reorder widgets on the user's dashboard. Provide the widget IDs in the desired order.
+    Widgets will be reflowed in a grid layout in this order.
+    Use this when the user asks to rearrange, reorder, or reorganize their dashboard.
+
+    Args:
+        widget_ids: List of widget IDs in the desired display order (from the CURRENT DASHBOARD STATE context).
+    """
+    return f"Dashboard reordered with {len(widget_ids)} widgets."
+
+
+@tool
 def submit_answer(answer: str, hypotheses: list[str]) -> str:
     """
     Always call this tool to submit your final answer and hypotheses.
@@ -191,13 +217,14 @@ def run_python_analysis(code: str, data_json: str) -> str:
 # Custom tools (Recharts-specific, kept alongside MCP tools)
 custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
 tool_node = ToolNode(custom_tools)
-visualization_tool = ToolNode([render_visualization])
+dashboard_tools = [render_visualization, remove_widget, reorder_dashboard]
+visualization_tool = ToolNode(dashboard_tools)
 submit_tool = ToolNode([submit_answer])
 
 llm = ChatAnthropic(model="claude-sonnet-4-6")
 # llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
 llm_with_tools = llm.bind_tools(custom_tools)
-llm_visualizer = llm.bind_tools([render_visualization])
+llm_visualizer = llm.bind_tools(dashboard_tools)
 llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
 
 # Will be rebound after MCP tools are loaded
@@ -381,7 +408,7 @@ def visualizer(state: MessagesState):
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message
-    messages = messages + [HumanMessage(content="Based on the results, decide if visualization is needed and use render_visualization function to visualize.")]
+    messages = messages + [HumanMessage(content="Based on the results and the user's request, decide what dashboard actions to take. You can: render new visualizations with render_visualization, remove widgets with remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed.")]
     response = llm_visualizer.invoke(messages)
     print("hi",response)
     return {"messages": [response]}
@@ -401,10 +428,27 @@ visualizer_system_prompt = ""
 self_critic_system_prompt = ""
 
 class Agent:
-    def __init__(self, message, similar_text):
+    def __init__(self, message, similar_text, dashboard_widgets=None):
         self.message = message
         self.similar_text = similar_text
+        self.dashboard_widgets = dashboard_widgets or []
         similar_data = "you are given the following similar text from a vectordb: " + self.similar_text
+
+        # Build dashboard context string
+        dashboard_context = ""
+        if self.dashboard_widgets:
+            widget_descriptions = []
+            for w in self.dashboard_widgets:
+                desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)})"
+                widget_descriptions.append(desc)
+            dashboard_context = f"""
+
+CURRENT DASHBOARD STATE:
+The user currently has {len(self.dashboard_widgets)} widget(s) on their dashboard:
+{chr(10).join(widget_descriptions)}
+
+You can reference existing widgets when answering. If the user asks to rearrange or reorganize the dashboard, you can create new visualizations that replace or complement existing ones.
+"""
 
         be_professional = "Be very professional!"
 
@@ -436,10 +480,13 @@ class Agent:
         Visualization:
         - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
         - `render_visualization` - Display charts on the UI (supports: bar, area, line, pie, radar, radial, boxplot)
+        - `remove_widget` - Remove a widget from the dashboard by its ID
+        - `reorder_dashboard` - Reorder widgets on the dashboard by providing widget IDs in desired order
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
         Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
-        """ + similar_data
+        You can remove or reorder existing dashboard widgets when the user asks. Use the widget IDs from the CURRENT DASHBOARD STATE.
+        """ + similar_data + dashboard_context
 
         output_system_prompt = """You are a material testing AI assistant.
 
@@ -476,6 +523,11 @@ class Agent:
         Render a chart on the user's dashboard.
         ALWAYS call this when displaying aggregated/statistical data.
 
+        You can also manage the dashboard:
+        - `remove_widget(widget_id)` — Remove a widget the user no longer wants
+        - `reorder_dashboard(widget_ids)` — Reorder widgets in the desired display order
+        Use these when the user asks to rearrange, clean up, or remove charts from their dashboard.
+
         Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
 
         IMPORTANT: data_json must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
@@ -491,7 +543,7 @@ class Agent:
         If the user mentions specific colors (e.g. "red and blue"), use those CSS color names directly.
         For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
         Use boxplot for comparing distributions (e.g. tensile strength across materials, comparing machines).
-        If not, still call the function with none values.""" + similar_data
+        If not, still call the function with none values.""" + similar_data + dashboard_context
 
 
     def build_agent(self):

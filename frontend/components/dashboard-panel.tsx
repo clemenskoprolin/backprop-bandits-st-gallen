@@ -538,12 +538,14 @@ function CardsVisualization({ data }: { data: CardsData }) {
 
 function DashboardWidgetCard({
   widget,
+  isNew,
   onRemove,
   onMaximize,
   onDownload,
   onDragHandleDown,
 }: {
   widget: DashboardWidget
+  isNew?: boolean
   onRemove: () => void
   onMaximize: () => void
   onDownload: () => void
@@ -576,7 +578,7 @@ function DashboardWidgetCard({
   }
 
   return (
-    <Card className="h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none">
+    <Card className={`h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none ${isNew ? 'ring-2 ring-primary/60 animate-pulse' : ''}`}>
       <CardHeader className="py-1.5 px-3 shrink-0 border-b border-border/30">
         <div className="flex items-center gap-2 overflow-hidden">
           {/* Drag handle - always visible */}
@@ -1019,6 +1021,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                   >
                     <DashboardWidgetCard
                       widget={widget}
+                      isNew={widget.isNew}
                       onRemove={() => removeWidget(widget.id)}
                       onMaximize={() => setFullscreenWidget(widget)}
                       onDownload={() => handleDownload(widget)}

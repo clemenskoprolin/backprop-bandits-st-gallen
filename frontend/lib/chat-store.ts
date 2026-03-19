@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, Message, Template, Visualization, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
+import { Session, Message, Template, Visualization, ChartData, TableData, CardsData, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
 import {
   fetchSessions,
   fetchSession,
@@ -10,6 +10,7 @@ import {
   fetchTemplates,
   sendMessageStream,
   SavedWidgetLayout,
+  DashboardWidgetContext,
 } from './api'
 
 interface ChatStore {
@@ -44,6 +45,7 @@ interface ChatStore {
   removeWidget: (widgetId: string) => void
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) => void
   reorderWidgets: (widgetIds: string[]) => void
+  clearNewWidgetFlags: () => void
 }
 
 function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
@@ -123,6 +125,29 @@ function persistWidgetLayouts(sessionId: string, widgets: DashboardWidget[]) {
   saveWidgetLayouts(sessionId, layouts).catch(() => {})
 }
 
+function getWidgetTitle(widget: DashboardWidget): string {
+  const { visualization } = widget
+  if (visualization.type === 'chart') return (visualization.data as ChartData)?.title ?? ''
+  if (visualization.type === 'table') return (visualization.data as TableData)?.title ?? ''
+  if (visualization.type === 'cards') return (visualization.data as CardsData)?.title ?? ''
+  return ''
+}
+
+function getWidgetChartType(widget: DashboardWidget): string {
+  const { visualization } = widget
+  if (visualization.type === 'chart') return (visualization.data as ChartData)?.chartType ?? 'chart'
+  return visualization.type
+}
+
+function buildDashboardContext(widgets: DashboardWidget[]): DashboardWidgetContext[] {
+  return widgets.map((w) => ({
+    id: w.id,
+    title: getWidgetTitle(w),
+    chart_type: getWidgetChartType(w),
+    position: { x: w.layout.x, y: w.layout.y, w: w.layout.w, h: w.layout.h },
+  }))
+}
+
 function addVisualizationWidget(
   state: ChatStore,
   visualization: Visualization,
@@ -151,6 +176,7 @@ function addVisualizationWidget(
     size,
     layout: { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h },
     queryUsed,
+    isNew: true,
   } satisfies DashboardWidget
 }
 
@@ -328,6 +354,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       })
     }
 
+    const dashboardCtx = buildDashboardContext(get().dashboardWidgets)
+
     try {
       await sendMessageStream(currentSession.session_id, content, {
         onSession: (data) => {
@@ -374,6 +402,35 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }))
           }
         },
+        onRemoveWidget: (widgetId) => {
+          set((state) => ({
+            dashboardWidgets: state.dashboardWidgets.filter((w) => w.id !== widgetId),
+          }))
+        },
+        onReorderDashboard: (widgetIds) => {
+          set((state) => {
+            const widgetMap = new Map(state.dashboardWidgets.map((w) => [w.id, w]))
+            const reordered: DashboardWidget[] = []
+            for (const id of widgetIds) {
+              const w = widgetMap.get(id)
+              if (w) reordered.push(w)
+            }
+            // Append any widgets not in the list (newly added during this stream)
+            for (const w of state.dashboardWidgets) {
+              if (!widgetIds.includes(w.id)) reordered.push(w)
+            }
+            // Reflow positions
+            const reflowed = reordered.map((w, i) => ({
+              ...w,
+              layout: {
+                ...w.layout,
+                x: (i % 2) * w.layout.w,
+                y: Math.floor(i / 2) * w.layout.h,
+              },
+            }))
+            return { dashboardWidgets: reflowed }
+          })
+        },
         onFollowups: (suggestions) => {
           followups.push(...suggestions)
           updateAssistantMessage()
@@ -385,6 +442,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         onDone: () => {
           // Final update with all accumulated data
           updateAssistantMessage()
+
+          // Clear new-widget highlights after 4 seconds
+          setTimeout(() => get().clearNewWidgetFlags(), 4000)
 
           // Auto-title: use first user message as session title
           const state = get()
@@ -398,7 +458,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }))
           }
         },
-      })
+      }, dashboardCtx)
     } catch (err) {
       console.error('Stream error:', err)
       fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
@@ -443,4 +503,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         .filter((w): w is DashboardWidget => w !== undefined)
       return { dashboardWidgets: reordered }
     }),
+
+  clearNewWidgetFlags: () =>
+    set((state) => ({
+      dashboardWidgets: state.dashboardWidgets.map((w) =>
+        w.isNew ? { ...w, isNew: false } : w
+      ),
+    })),
 }))

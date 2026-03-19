@@ -260,15 +260,25 @@ export interface StreamCallbacks {
   onQuery?: (query: string) => void
   onText?: (chunk: string) => void
   onVisualization?: (visualization: Visualization) => void
+  onRemoveWidget?: (widgetId: string) => void
+  onReorderDashboard?: (widgetIds: string[]) => void
   onFollowups?: (suggestions: string[]) => void
   onError?: (error: string) => void
   onDone?: () => void
 }
 
+export interface DashboardWidgetContext {
+  id: string
+  title: string
+  chart_type: string
+  position: { x: number; y: number; w: number; h: number }
+}
+
 export async function sendMessageStream(
   sessionId: string | null,
   message: string,
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  dashboardWidgets?: DashboardWidgetContext[]
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
@@ -276,6 +286,7 @@ export async function sendMessageStream(
     body: JSON.stringify({
       message,
       session_id: sessionId?.startsWith('temp_') ? null : sessionId,
+      dashboard_widgets: dashboardWidgets ?? [],
     }),
   })
 
@@ -345,6 +356,12 @@ export async function sendMessageStream(
               if (vis) callbacks.onVisualization?.(vis)
               break
             }
+            case 'remove_widget':
+              callbacks.onRemoveWidget?.(parsed.widget_id)
+              break
+            case 'reorder_dashboard':
+              callbacks.onReorderDashboard?.(parsed.widget_ids ?? [])
+              break
             case 'followups':
               callbacks.onFollowups?.(parsed.suggestions ?? [])
               break
