@@ -22,7 +22,7 @@ export interface Visualization {
 }
 
 export interface ChartData {
-  chartType: 'bar' | 'line' | 'area' | 'pie' | 'radar' | 'radial'
+  chartType: 'bar' | 'line' | 'area' | 'pie' | 'radar' | 'radial' | 'boxplot'
   title: string
   description?: string
   xAxisKey?: string

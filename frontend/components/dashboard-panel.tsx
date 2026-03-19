@@ -16,6 +16,7 @@ import {
 import {
   Bar,
   BarChart,
+  ComposedChart,
   Line,
   LineChart,
   Area,
@@ -33,6 +34,9 @@ import {
   CartesianGrid,
   Label,
   Cell,
+  Scatter,
+  Rectangle,
+  type RectangleProps,
 } from 'recharts'
 import { useChatStore } from '@/lib/chat-store'
 import { DashboardWidget, ChartData, TableData, CardsData } from '@/lib/types'
@@ -264,6 +268,172 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               ))}
             </RadialBar>
           </RadialBarChart>
+        )
+      }
+      case 'boxplot': {
+        // Data format: [{ name, min, q1, median, q3, max, ...optional outliers[] }]
+        // We render: invisible bar from 0→min, bar from min→q1 (lower whisker region),
+        // bar from q1→q3 (the box), then custom shapes for whiskers and median.
+        const boxData = data.data.map((d) => ({
+          ...d,
+          // Stacked bar segments: base (invisible), box (q1→q3)
+          _base: Number(d.q1),            // invisible spacer
+          _box: Number(d.q3) - Number(d.q1), // IQR box height
+          _median: Number(d.median),
+          _min: Number(d.min),
+          _max: Number(d.max),
+        }))
+
+        // Custom shape for the IQR box — also draws whiskers and median
+        const BoxWithWhiskers = (props: RectangleProps & { payload?: Record<string, number> }) => {
+          const { x, y, width, height, payload } = props
+          if (x == null || y == null || width == null || height == null || !payload) return null
+
+          const yScale = (val: number) => {
+            // Map value to pixel: y is top of box (q3), y+height is bottom (q1)
+            const q1 = payload._base
+            const q3 = q1 + payload._box
+            if (q3 === q1) return y
+            return y + height * (1 - (val - q1) / (q3 - q1))
+          }
+
+          const midX = x + width / 2
+          const whiskerW = width * 0.4
+          const minY = yScale(payload._max)
+          const maxY = yScale(payload._min)
+          const medianY = yScale(payload._median)
+
+          return (
+            <g>
+              {/* IQR Box */}
+              <Rectangle
+                x={x}
+                y={y}
+                width={width}
+                height={height}
+                fill="var(--chart-1)"
+                fillOpacity={0.3}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                radius={[4, 4, 4, 4]}
+              />
+              {/* Median line */}
+              <line
+                x1={x + 2}
+                x2={x + width - 2}
+                y1={medianY}
+                y2={medianY}
+                stroke="var(--chart-1)"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+              />
+              {/* Upper whisker (vertical line from q3 to max) */}
+              <line
+                x1={midX}
+                x2={midX}
+                y1={y}
+                y2={minY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+              />
+              {/* Upper whisker cap */}
+              <line
+                x1={midX - whiskerW / 2}
+                x2={midX + whiskerW / 2}
+                y1={minY}
+                y2={minY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+              />
+              {/* Lower whisker (vertical line from q1 to min) */}
+              <line
+                x1={midX}
+                x2={midX}
+                y1={y + height}
+                y2={maxY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+              />
+              {/* Lower whisker cap */}
+              <line
+                x1={midX - whiskerW / 2}
+                x2={midX + whiskerW / 2}
+                y1={maxY}
+                y2={maxY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+              />
+            </g>
+          )
+        }
+
+        // Custom tooltip for boxplot
+        const BoxPlotTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: Record<string, unknown> }> }) => {
+          if (!active || !payload?.length) return null
+          const d = payload[0].payload
+          return (
+            <div className="border-border/50 bg-background rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
+              <p className="font-medium mb-1">{String(d[xAxisKey] || '')}</p>
+              <div className="grid gap-0.5 text-muted-foreground">
+                <span>Max: <span className="text-foreground font-mono">{Number(d._max).toLocaleString()}</span></span>
+                <span>Q3: <span className="text-foreground font-mono">{Number(d._base) + Number(d._box)}</span></span>
+                <span>Median: <span className="text-foreground font-mono">{Number(d._median).toLocaleString()}</span></span>
+                <span>Q1: <span className="text-foreground font-mono">{Number(d._base).toLocaleString()}</span></span>
+                <span>Min: <span className="text-foreground font-mono">{Number(d._min).toLocaleString()}</span></span>
+              </div>
+            </div>
+          )
+        }
+
+        // Compute Y domain with padding
+        const allMin = Math.min(...boxData.map((d) => d._min))
+        const allMax = Math.max(...boxData.map((d) => d._max))
+        const padding = (allMax - allMin) * 0.1 || 1
+        const yDomain = [Math.floor(allMin - padding), Math.ceil(allMax + padding)]
+
+        return (
+          <ComposedChart data={boxData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+            <XAxis
+              dataKey={xAxisKey}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+              tickLine={{ stroke: 'var(--border)' }}
+              axisLine={{ stroke: 'var(--border)' }}
+            />
+            <YAxis
+              domain={yDomain}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+              tickLine={{ stroke: 'var(--border)' }}
+              axisLine={{ stroke: 'var(--border)' }}
+            />
+            <ChartTooltip content={<BoxPlotTooltip />} />
+            {/* Invisible spacer bar from 0 to q1 */}
+            <Bar dataKey="_base" stackId="box" fill="transparent" barSize={40} />
+            {/* IQR box from q1 to q3, with custom shape that also draws whiskers + median */}
+            <Bar
+              dataKey="_box"
+              stackId="box"
+              barSize={40}
+              shape={<BoxWithWhiskers />}
+            />
+            {/* Outlier scatter points if present */}
+            {data.data.some((d) => Array.isArray(d.outliers)) && (
+              <Scatter
+                data={data.data.flatMap((d) =>
+                  Array.isArray(d.outliers)
+                    ? (d.outliers as number[]).map((v) => ({ [xAxisKey]: d[xAxisKey], value: v }))
+                    : []
+                )}
+                dataKey="value"
+                fill="var(--chart-2)"
+                r={3}
+              />
+            )}
+          </ComposedChart>
         )
       }
       case 'bar':

@@ -81,17 +81,20 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
     ALWAYS call this when displaying aggregated/statistical data.
 
     Args:
-        chart_type: One of 'bar', 'area', 'line', 'pie', 'radar', 'radial'.
+        chart_type: One of 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
         title: Chart title.
         x_axis_key: The key in data records used for the x-axis / category labels (e.g. 'date', 'material', 'name').
         data_json: JSON string of FLAT records array. Each record is an object with the x_axis_key and one or more numeric series keys.
             Example: '[{"date": "2024-01", "tensile_strength": 420, "yield_strength": 380}, {"date": "2024-02", "tensile_strength": 435, "yield_strength": 390}]'
             For pie charts: '[{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]'
+            For boxplot charts: each record MUST have keys "min", "q1", "median", "q3", "max", and optionally "outliers" (array of numbers).
+            Example: '[{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}, {"name": "Material B", "min": 300, "q1": 340, "median": 370, "q3": 400, "max": 430, "outliers": [280, 500]}]'
         chart_config_json: JSON string defining series metadata. Keys are the series data keys, values have 'label' and 'color'.
             Color can be a CSS color name (e.g. "red", "blue"), hex (e.g. "#ff0000"), or theme token (e.g. "var(--chart-1)").
             If the user mentions specific colors, use those exact CSS color names.
             Example: '{"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}'
             For pie charts with user-specified colors: '{"value": {"label": "Count"}}' and set "fill" in data_json: '[{"name": "Red", "value": 50, "fill": "red"}, {"name": "Blue", "value": 50, "fill": "blue"}]'
+            For boxplot charts: '{"median": {"label": "Median", "color": "var(--chart-1)"}}'
         description: Optional short description shown below the title.
     """
     return "Visualization successfully rendered on UI."
@@ -432,7 +435,7 @@ class Agent:
 
         Visualization:
         - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-        - `render_visualization` - Display charts on the UI (supports: bar, area, line, pie, radar, radial)
+        - `render_visualization` - Display charts on the UI (supports: bar, area, line, pie, radar, radial, boxplot)
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
         Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
@@ -473,11 +476,13 @@ class Agent:
         Render a chart on the user's dashboard.
         ALWAYS call this when displaying aggregated/statistical data.
 
-        Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial'.
+        Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
 
         IMPORTANT: data_json must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
         Example for bar/line/area: [{"material": "Steel A", "tensile_strength": 420, "yield_strength": 380}, ...]
         Example for pie: [{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]
+        Example for boxplot: [{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}]
+        Boxplot records MUST have: min, q1, median, q3, max. Optionally "outliers" (array of numbers).
 
         chart_config_json maps each numeric key to its display label and color:
         {"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}
@@ -485,6 +490,7 @@ class Agent:
         Use var(--chart-1) through var(--chart-5) for default colors.
         If the user mentions specific colors (e.g. "red and blue"), use those CSS color names directly.
         For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
+        Use boxplot for comparing distributions (e.g. tensile strength across materials, comparing machines).
         If not, still call the function with none values.""" + similar_data
 
 
