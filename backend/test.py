@@ -16,7 +16,7 @@ if (stream):
 else:
     response = httpx.post(
         "http://localhost:8000/api/chat",
-        json={"message": "List all tests", "session_id": None},
+        json={"message": "Please how me a few sample documents", "session_id": None},
         timeout=60.0  # ← outside json, as httpx parameter
     )
     print(response.json())
