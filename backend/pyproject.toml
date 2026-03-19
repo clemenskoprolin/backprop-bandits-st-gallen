@@ -22,4 +22,8 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "python-dotenv>=1.2.2",
     "uvicorn>=0.42.0",
+    "langchain-experimental>=0.3.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "scipy>=1.14.0",
 ]

@@ -183,10 +183,12 @@ async def chat_stream(req: ChatRequest):
                         yield _sse_event("text", {"chunk": text})
                 elif kind == "on_tool_start":
                     tool_name = event["name"]
-                    if tool_name != "render_visualization":
-                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
-                    else:
+                    if tool_name == "render_visualization":
                         yield _sse_event("thinking", {"step": "Rendering visualization..."})
+                    elif tool_name == "run_python_analysis":
+                        yield _sse_event("thinking", {"step": "Running statistical analysis..."})
+                    else:
+                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
                 elif kind == "on_tool_end":
                     if event["name"] == "render_visualization":
                         try:
