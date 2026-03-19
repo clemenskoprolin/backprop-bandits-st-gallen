@@ -7,8 +7,9 @@ import {
   MessageSquareIcon,
   LayoutDashboardIcon,
   PanelRightCloseIcon,
-  EyeOffIcon,
   GripVerticalIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   XIcon,
 } from 'lucide-react'
 import { useChatStore } from '@/lib/chat-store'
@@ -92,9 +93,11 @@ export function ChatContainer() {
   // Global handlers attached/detached via useEffect
   const dragModeRef = useRef<DragMode>(null)
   const rawFractionRef = useRef(0.5)
+  const dragMovedRef = useRef(false)
 
   const onPointerMove = useCallback((e: PointerEvent) => {
     if (!dragModeRef.current) return
+    dragMovedRef.current = true
     const f = fractionFromEvent(e)
     rawFractionRef.current = f
     setRawFraction(f)
@@ -104,6 +107,7 @@ export function ChatContainer() {
   const onPointerUp = useCallback(() => {
     const mode = dragModeRef.current
     if (!mode) return
+    const moved = dragMovedRef.current
     const f = rawFractionRef.current
     const result = resolveRelease(f)
 
@@ -118,20 +122,37 @@ export function ChatContainer() {
         setSplitFraction(result.value)
       }
     } else if (mode === 'restore-chat') {
-      if (f > COLLAPSE_LEFT) {
+      if (!moved) {
+        // Click without dragging — restore at 50/50
+        setShowChat(true)
+        setShowDashboard(true)
+        setSplitFraction(0.5)
+      } else if (f > COLLAPSE_LEFT) {
         setShowChat(true)
         setShowDashboard(true)
         setSplitFraction(result.action === 'set' ? result.value : 0.5)
+      } else {
+        // Dragged but stayed in collapse zone — reset
+        setSplitFraction(0.5)
       }
     } else if (mode === 'restore-dashboard') {
-      if (f < COLLAPSE_RIGHT) {
+      if (!moved) {
+        // Click without dragging — restore at 50/50
+        setShowChat(true)
+        setShowDashboard(true)
+        setSplitFraction(0.5)
+      } else if (f < COLLAPSE_RIGHT) {
         setShowChat(true)
         setShowDashboard(true)
         setSplitFraction(result.action === 'set' ? result.value : 0.5)
+      } else {
+        // Dragged but stayed in collapse zone — reset
+        setSplitFraction(0.5)
       }
     }
 
     dragModeRef.current = null
+    dragMovedRef.current = false
     setDragMode(null)
   }, [setShowChat, setShowDashboard])
 
@@ -149,6 +170,7 @@ export function ChatContainer() {
     const f = fractionFromEvent(e)
     dragModeRef.current = mode
     rawFractionRef.current = f
+    dragMovedRef.current = false
     setDragMode(mode)
     setRawFraction(f)
     if (mode === 'restore-chat') {
@@ -228,13 +250,14 @@ export function ChatContainer() {
         </div>
       )}
 
-      {/* ── Edge handle: restore chat ── */}
+      {/* ── Edge handle: restore chat (left side) — click or drag ── */}
       {!showChat && hasWidgets && showDashboard && !isDragging && (
         <div
-          className="w-1.5 shrink-0 cursor-col-resize bg-border hover:bg-primary/30 transition-colors z-20 flex items-center justify-center"
+          className="w-8 shrink-0 cursor-pointer bg-muted/50 hover:bg-muted transition-colors z-20 flex flex-col items-center justify-center gap-1 border-r border-border"
           onPointerDown={(e) => startDrag('restore-chat', e)}
         >
-          <GripVerticalIcon className="h-4 w-4 text-muted-foreground pointer-events-none" />
+          <ChevronRightIcon className="h-4 w-4 text-muted-foreground pointer-events-none" />
+          <span className="text-[10px] text-muted-foreground [writing-mode:vertical-lr] rotate-180 pointer-events-none">Chat</span>
         </div>
       )}
 
@@ -274,21 +297,6 @@ export function ChatContainer() {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>{showDashboard ? 'Hide Dashboard' : 'Show Dashboard'}</TooltipContent>
-                </Tooltip>
-              )}
-              {showDashboard && hasWidgets && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setShowChat(false)}
-                    >
-                      <EyeOffIcon className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Hide Chat</TooltipContent>
                 </Tooltip>
               )}
             </div>
@@ -361,13 +369,14 @@ export function ChatContainer() {
         </div>
       )}
 
-      {/* ── Edge handle: restore dashboard ── */}
+      {/* ── Edge handle: restore dashboard (right side) — click or drag ── */}
       {!showDashboard && hasWidgets && showChat && !isDragging && (
         <div
-          className="w-1.5 shrink-0 cursor-col-resize bg-border hover:bg-primary/30 transition-colors z-20 flex items-center justify-center"
+          className="w-8 shrink-0 cursor-pointer bg-muted/50 hover:bg-muted transition-colors z-20 flex flex-col items-center justify-center gap-1 border-l border-border"
           onPointerDown={(e) => startDrag('restore-dashboard', e)}
         >
-          <GripVerticalIcon className="h-4 w-4 text-muted-foreground pointer-events-none" />
+          <ChevronLeftIcon className="h-4 w-4 text-muted-foreground pointer-events-none" />
+          <span className="text-[10px] text-muted-foreground [writing-mode:vertical-lr] pointer-events-none">Dashboard</span>
         </div>
       )}
 

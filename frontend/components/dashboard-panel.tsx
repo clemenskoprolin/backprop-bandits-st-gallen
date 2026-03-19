@@ -5,12 +5,12 @@ import {
   XIcon,
   DownloadIcon,
   MaximizeIcon,
-  MessageSquareIcon,
   TrendingUpIcon,
   TrendingDownIcon,
   MinusIcon,
   LayoutDashboardIcon,
-  EyeOffIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   GripVerticalIcon,
 } from 'lucide-react'
 import {
@@ -447,7 +447,7 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
 }
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
-  const { dashboardWidgets, removeWidget, updateWidgetLayouts, setShowDashboard } = useChatStore()
+  const { dashboardWidgets, removeWidget, updateWidgetLayouts } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -652,42 +652,26 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   return (
     <div ref={containerRef} className="flex h-full flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
-        <div className="flex items-center gap-2">
-          {!showChat && <SidebarTrigger />}
-          <LayoutDashboardIcon className="h-5 w-5 text-muted-foreground" />
-          <h2 className="font-semibold text-foreground">Dashboard</h2>
-          <span className="text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3 shrink-0">
+        {!showChat && <SidebarTrigger />}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleChat}
+              className="h-8 w-8"
+            >
+              {showChat ? <PanelLeftCloseIcon className="h-4 w-4" /> : <PanelLeftOpenIcon className="h-4 w-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{showChat ? 'Hide Chat' : 'Show Chat'}</TooltipContent>
+        </Tooltip>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-semibold text-foreground truncate">Dashboard</h2>
+          <p className="text-xs text-muted-foreground">
             {dashboardWidgets.length} widget{dashboardWidgets.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onToggleChat}
-                className="h-8 w-8"
-              >
-                <MessageSquareIcon className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{showChat ? 'Hide Chat' : 'Show Chat'}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowDashboard(false)}
-                className="h-8 w-8"
-              >
-                <EyeOffIcon className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Hide Dashboard</TooltipContent>
-          </Tooltip>
+          </p>
         </div>
       </div>
 
