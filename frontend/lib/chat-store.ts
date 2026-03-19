@@ -6,6 +6,7 @@ import {
   createSession,
   deleteSession,
   renameSession,
+  saveWidgetLayouts,
   fetchTemplates,
   sendMessage,
 } from './mock-data'
@@ -21,7 +22,9 @@ interface ChatStore {
   showChat: boolean
   showDashboard: boolean
   dashboardWidgets: DashboardWidget[]
-  
+  /** Per-session widget cache so positions/sizes survive session switches */
+  _sessionWidgetCache: Record<string, DashboardWidget[]>
+
   // Actions
   loadSessions: () => Promise<void>
   loadSession: (id: string) => Promise<void>
@@ -33,12 +36,53 @@ interface ChatStore {
   setShowChat: (show: boolean) => void
   setShowDashboard: (show: boolean) => void
   clearCurrentSession: () => void
-  
+
   // Dashboard widget actions
   addWidget: (widget: DashboardWidget) => void
   removeWidget: (widgetId: string) => void
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) => void
   reorderWidgets: (widgetIds: string[]) => void
+}
+
+function buildWidgetsFromMessages(messages: Message[]): DashboardWidget[] {
+  const getDefaultSize = (type: string): WidgetSize => {
+    if (type === 'cards') return 'medium'
+    if (type === 'table') return 'large'
+    return 'large'
+  }
+
+  return messages
+    .filter((m) => m.visualization && m.visualization.type !== 'none')
+    .map((m, index) => {
+      const size = getDefaultSize(m.visualization!.type)
+      const sizeConfig = WIDGET_SIZE_CONFIG[size]
+      return {
+        id: `widget_${m.message_id}`,
+        messageId: m.message_id,
+        visualization: m.visualization!,
+        size,
+        layout: {
+          x: (index % 2) * sizeConfig.w,
+          y: Math.floor(index / 2) * sizeConfig.h,
+          w: sizeConfig.w,
+          h: sizeConfig.h,
+        },
+        queryUsed: m.query_used,
+      }
+    })
+}
+
+/** Persist current widget layouts to the backend (fire-and-forget). */
+function persistWidgetLayouts(sessionId: string, widgets: DashboardWidget[]) {
+  const layouts = widgets.map((w) => ({
+    id: w.id,
+    messageId: w.messageId,
+    x: w.layout.x,
+    y: w.layout.y,
+    w: w.layout.w,
+    h: w.layout.h,
+  }))
+  saveWidgetLayouts(sessionId, layouts).catch(() => {})
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -51,6 +95,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   showChat: true,
   showDashboard: true,
   dashboardWidgets: [],
+  _sessionWidgetCache: {},
 
   loadSessions: async () => {
     set({ isLoading: true })
@@ -63,38 +108,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   loadSession: async (id: string) => {
+    const { currentSession, dashboardWidgets } = get()
+
+    // Save current session's widgets to cache before switching
+    if (currentSession && currentSession.session_id !== id) {
+      set((state) => ({
+        _sessionWidgetCache: {
+          ...state._sessionWidgetCache,
+          [currentSession.session_id]: state.dashboardWidgets,
+        },
+      }))
+      persistWidgetLayouts(currentSession.session_id, dashboardWidgets)
+    }
+
     set({ isLoading: true })
     try {
       const { session, messages } = await fetchSession(id)
-      
-      // Convert messages with visualizations to dashboard widgets
-      // Determine size based on visualization type
-      const getDefaultSize = (type: string): WidgetSize => {
-        if (type === 'cards') return 'medium'
-        if (type === 'table') return 'large'
-        return 'large' // charts default to large
-      }
-      
-      const widgets: DashboardWidget[] = messages
-        .filter((m) => m.visualization && m.visualization.type !== 'none')
-        .map((m, index) => {
-          const size = getDefaultSize(m.visualization!.type)
-          const sizeConfig = WIDGET_SIZE_CONFIG[size]
-          return {
-            id: `widget_${m.message_id}`,
-            messageId: m.message_id,
-            visualization: m.visualization!,
-            size,
-            layout: {
-              x: (index % 2) * sizeConfig.w,
-              y: Math.floor(index / 2) * sizeConfig.h,
-              w: sizeConfig.w,
-              h: sizeConfig.h,
-            },
-            queryUsed: m.query_used,
-          }
-        })
-      
+
+      // Restore cached widgets if available, otherwise rebuild from messages
+      const cached = get()._sessionWidgetCache[id]
+      const widgets = cached ?? buildWidgetsFromMessages(messages)
+
       set({ currentSession: session, messages, dashboardWidgets: widgets })
     } finally {
       set({ isLoading: false })
@@ -107,6 +141,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   createNewSession: async () => {
+    const { currentSession, dashboardWidgets } = get()
+
+    // Save outgoing session's widgets
+    if (currentSession) {
+      set((state) => ({
+        _sessionWidgetCache: {
+          ...state._sessionWidgetCache,
+          [currentSession.session_id]: state.dashboardWidgets,
+        },
+      }))
+      persistWidgetLayouts(currentSession.session_id, dashboardWidgets)
+    }
+
     set({ isLoading: true })
     try {
       const session = await createSession()
@@ -137,10 +184,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   deleteCurrentSession: async () => {
     const { currentSession, sessions } = get()
     if (!currentSession) return
-    
+
     set({ isLoading: true })
     try {
       await deleteSession(currentSession.session_id)
+
+      // Remove from cache
+      set((state) => {
+        const cache = { ...state._sessionWidgetCache }
+        delete cache[currentSession.session_id]
+        return { _sessionWidgetCache: cache }
+      })
+
       const remaining = sessions.filter((s) => s.session_id !== currentSession.session_id)
       set({
         sessions: remaining,
@@ -160,7 +215,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const { currentSession, messages } = get()
     if (!currentSession) return
 
-    // Add user message
     const userMessage: Message = {
       message_id: `user_${Date.now()}`,
       role: 'user',
@@ -172,7 +226,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     try {
       const response = await sendMessage(currentSession.session_id, content)
-      
+
       const assistantMessage: Message = {
         message_id: response.message_id,
         role: 'assistant',
@@ -187,23 +241,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // Add visualization to dashboard if present
       if (response.visualization && response.visualization.type !== 'none') {
         const existingWidgets = get().dashboardWidgets
-        // Calculate next position
         let maxY = 0
         existingWidgets.forEach(w => {
           const bottomY = w.layout.y + w.layout.h
           if (bottomY > maxY) maxY = bottomY
         })
-        
-        // Determine size based on type
+
         const getDefaultSize = (type: string): WidgetSize => {
           if (type === 'cards') return 'medium'
           if (type === 'table') return 'large'
           return 'large'
         }
-        
+
         const size = getDefaultSize(response.visualization.type)
         const sizeConfig = WIDGET_SIZE_CONFIG[size]
-        
+
         const newWidget: DashboardWidget = {
           id: `widget_${response.message_id}`,
           messageId: response.message_id,
@@ -221,7 +273,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           dashboardWidgets: [...state.dashboardWidgets, newWidget],
         }))
       }
-      
+
       set((state) => ({
         messages: [...state.messages, assistantMessage],
       }))
@@ -236,7 +288,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   clearCurrentSession: () => set({ currentSession: null, messages: [], dashboardWidgets: [] }),
 
-  addWidget: (widget: DashboardWidget) => 
+  addWidget: (widget: DashboardWidget) =>
     set((state) => ({ dashboardWidgets: [...state.dashboardWidgets, widget] })),
 
   removeWidget: (widgetId: string) =>
@@ -245,12 +297,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     })),
 
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) =>
-    set((state) => ({
-      dashboardWidgets: state.dashboardWidgets.map((w) => {
+    set((state) => {
+      const updated = state.dashboardWidgets.map((w) => {
         const layoutUpdate = layouts.find((l) => l.id === w.id)
         return layoutUpdate ? { ...w, layout: layoutUpdate.layout } : w
-      }),
-    })),
+      })
+      // Also update the cache for the current session
+      const sid = state.currentSession?.session_id
+      const newCache = sid
+        ? { ...state._sessionWidgetCache, [sid]: updated }
+        : state._sessionWidgetCache
+      return { dashboardWidgets: updated, _sessionWidgetCache: newCache }
+    }),
 
   reorderWidgets: (widgetIds: string[]) =>
     set((state) => {

@@ -311,14 +311,18 @@ export function TemplatesDialog({ onSelectTemplate, open: controlledOpen, onOpen
     setSelectedCategory(null)
   }
 
+  const isControlled = controlledOpen !== undefined
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
-          <LayoutTemplateIcon className="h-4 w-4" />
-          <span>Use a template</span>
-        </Button>
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
+            <LayoutTemplateIcon className="h-4 w-4" />
+            <span>Use a template</span>
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-2xl h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">

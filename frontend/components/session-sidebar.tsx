@@ -42,6 +42,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 export function SessionSidebar() {
   const {
@@ -271,14 +272,17 @@ export function SessionSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="px-4 py-4">
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2"
-          onClick={() => createNewSession()}
-        >
-          <PlusIcon className="h-4 w-4" />
-          New Analysis
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="flex-1 justify-start gap-2"
+            onClick={() => createNewSession()}
+          >
+            <PlusIcon className="h-4 w-4" />
+            New Analysis
+          </Button>
+          <ThemeToggle />
+        </div>
       </SidebarFooter>
     </Sidebar>
   )

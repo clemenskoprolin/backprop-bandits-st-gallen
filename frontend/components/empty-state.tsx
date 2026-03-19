@@ -26,25 +26,25 @@ const suggestions = [
     icon: BarChart3Icon,
     title: 'Compare Materials',
     description: 'Analyze differences between material types',
-    prompt: 'Compare the tensile and yield strength across different materials in my dataset',
+    category: 'Analysis',
   },
   {
     icon: TrendingUpIcon,
     title: 'Trend Analysis',
     description: 'Find patterns in your test data',
-    prompt: 'Show me the trend of tensile strength over the past 6 months',
+    category: 'Analysis',
   },
   {
     icon: SearchIcon,
     title: 'Find Outliers',
     description: 'Identify data points outside normal ranges',
-    prompt: 'List all data points with tensile strength > 400 MPa',
+    category: 'Query',
   },
   {
     icon: ZapIcon,
     title: 'Quick Summary',
     description: 'Get an overview of your test results',
-    prompt: 'Give me a summary overview of all recent material tests',
+    category: 'Visualization',
   },
 ]
 
@@ -91,7 +91,7 @@ export function EmptyState({ onSuggestionClick }: EmptyStateProps) {
                   'cursor-pointer transition-all hover:bg-muted hover:border-border',
                   'group'
                 )}
-                onClick={() => onSuggestionClick(suggestion.prompt)}
+                onClick={() => handleOpenTemplates(suggestion.category)}
               >
                 <CardContent className="flex items-start gap-4 p-4">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted group-hover:bg-card">
@@ -159,6 +159,7 @@ export function EmptyState({ onSuggestionClick }: EmptyStateProps) {
               </div>
             </div>
           )}
+
         </div>
       </div>
 

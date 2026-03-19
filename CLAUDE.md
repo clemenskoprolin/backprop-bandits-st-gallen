@@ -225,19 +225,21 @@ Design Principles
 
 All routes are prefixed /api.
 
-┌──────────────────────────────┬────────────────────────────────────────────────┐
-│ Route                        │ Purpose                                        │
-├──────────────────────────────┼────────────────────────────────────────────────┤
-│ POST /api/chat/stream        │ PRIMARY — SSE stream, NL query → live events   │
-│ POST /api/chat               │ Non-streaming fallback (same response shape)   │
-│ GET  /api/sessions           │ List sessions + data schema                    │
-│ GET  /api/sessions/{id}      │ Full session with message history + charts     │
-│ DELETE /api/sessions/{id}    │ Remove session                                 │
-│ POST /api/feedback           │ Thumbs up/down + comment (human-in-the-loop)  │
-│ GET  /api/templates          │ List saved query templates                     │
-│ POST /api/templates          │ Save a prompt as reusable template             │
-│ DELETE /api/templates/{id}   │ Remove template                                │
-└──────────────────────────────┴────────────────────────────────────────────────┘
+┌───────────────────────────────────────┬────────────────────────────────────────────────┐
+│ Route                                 │ Purpose                                        │
+├───────────────────────────────────────┼────────────────────────────────────────────────┤
+│ POST  /api/chat/stream                │ PRIMARY — SSE stream, NL query → live events   │
+│ POST  /api/chat                       │ Non-streaming fallback (same response shape)   │
+│ GET   /api/sessions                   │ List sessions + data schema                    │
+│ GET   /api/sessions/{id}              │ Full session with message history + charts     │
+│ PATCH /api/sessions/{id}              │ Rename session (body: { title: str })          │
+│ PUT   /api/sessions/{id}/widgets      │ Save widget layouts for session dashboard      │
+│ DELETE /api/sessions/{id}             │ Remove session                                 │
+│ POST  /api/feedback                   │ Thumbs up/down + comment (human-in-the-loop)  │
+│ GET   /api/templates                  │ List saved query templates                     │
+│ POST  /api/templates                  │ Save a prompt as reusable template             │
+│ DELETE /api/templates/{id}            │ Remove template                                │
+└───────────────────────────────────────┴────────────────────────────────────────────────┘
 
 --------------------------------------------------------------------------------
 SSE stream event sequence  (POST /api/chat/stream)

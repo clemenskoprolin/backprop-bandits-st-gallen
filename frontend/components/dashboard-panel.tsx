@@ -401,7 +401,6 @@ const itemWidth = (w: number) => w * COLUMN_WIDTH + (w - 1) * GRID_GAP
  * then reflow positions so nothing overflows.
  */
 function reflowLayout(widgets: DashboardWidget[], cols: number) {
-  // Build an occupied grid to place items top-left with wrapping
   const occupied = new Set<string>()
   const cellKey = (x: number, y: number) => `${x},${y}`
 
@@ -409,8 +408,9 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
 
   for (const widget of widgets) {
     const w = Math.min(widget.layout.w, cols)
-    // Try the widget's stored position first
     let placed = false
+
+    // Try the widget's stored position first
     const sx = Math.min(widget.layout.x, cols - w)
     const sy = widget.layout.y
     let fits = true
@@ -424,7 +424,6 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
     }
 
     if (!placed) {
-      // Find the first row/col where it fits
       for (let y = 0; ; y++) {
         for (let x = 0; x <= cols - w; x++) {
           let ok = true
@@ -467,13 +466,13 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   } | null>(null)
   const [dragVisual, setDragVisual] = useState<{ widgetId: string; px: number; py: number } | null>(null)
 
-  // ── Resize state ──
+  // ── Resize state (width only) ──
   const resizeRef = useRef<{
     widgetId: string
     startPointerX: number
     startW: number
   } | null>(null)
-  const [resizeVisualWidth, setResizeVisualWidth] = useState<{ widgetId: string; width: number } | null>(null)
+  const [resizeVisual, setResizeVisual] = useState<{ widgetId: string; width: number } | null>(null)
 
   // Measure container width
   useEffect(() => {
@@ -516,7 +515,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     setDragVisual({ widgetId, px, py })
   }, [layoutMap])
 
-  // ── Resize handle ──
+  // ── Resize handle (width only — right edge or bottom-right corner) ──
   const handleResizeHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -528,7 +527,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       startPointerX: e.clientX,
       startW: itemWidth(w),
     }
-    setResizeVisualWidth({ widgetId, width: itemWidth(w) })
+    setResizeVisual({ widgetId, width: itemWidth(w) })
   }, [])
 
   // ── Global pointer move / up ──
@@ -570,11 +569,11 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         }
       }
 
-      // ── Resize ──
+      // ── Resize (width only) ──
       if (resizeRef.current) {
         const resize = resizeRef.current
         const newWidth = Math.max(COLUMN_WIDTH / 2, resize.startW + (e.clientX - resize.startPointerX))
-        setResizeVisualWidth({ widgetId: resize.widgetId, width: newWidth })
+        setResizeVisual({ widgetId: resize.widgetId, width: newWidth })
       }
     }
 
@@ -611,7 +610,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           updateWidgetLayouts([{ id: resize.widgetId, layout: { ...widget.layout, w: snappedW } }])
         }
         resizeRef.current = null
-        setResizeVisualWidth(null)
+        setResizeVisual(null)
       }
     }
 
@@ -692,13 +691,13 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             <div style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
-                const isBeingResized = resizeVisualWidth?.widgetId === widget.id
+                const isBeingResized = resizeVisual?.widgetId === widget.id
                 const placement = layoutMap.get(widget.id)
 
                 const px = isBeingDragged ? dragVisual.px : toPixelX(placement?.x ?? widget.layout.x)
                 const py = isBeingDragged ? dragVisual.py : toPixelY(placement?.y ?? widget.layout.y)
                 const displayW = placement?.w ?? Math.min(widget.layout.w, cols)
-                const w = isBeingResized ? resizeVisualWidth.width : itemWidth(displayW)
+                const w = isBeingResized ? resizeVisual.width : itemWidth(displayW)
 
                 return (
                   <div
@@ -726,6 +725,19 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                         onPointerDown={(e) => handleResizeHandleDown(widget.id, e)}
                       >
                         <div className="w-1 h-6 rounded border-r-2 border-border" />
+                      </div>
+                    )}
+                    {/* Resize handle — bottom-right corner */}
+                    {cols >= 2 && (
+                      <div
+                        className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize opacity-0 hover:opacity-100 transition-opacity z-10"
+                        onPointerDown={(e) => handleResizeHandleDown(widget.id, e)}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 20 20" className="text-muted-foreground/60">
+                          <path d="M17 5 L5 17" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                          <path d="M17 10 L10 17" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                          <path d="M17 15 L15 17" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                        </svg>
                       </div>
                     )}
                   </div>
