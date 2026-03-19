@@ -11,7 +11,6 @@ Routes:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from uuid import uuid4
 
@@ -86,6 +85,50 @@ def get_similarity_by_query(message: str):
     return "hello"
 
 
+# Keys that represent x-axis labels rather than numeric series
+_LABEL_KEYS = {"name", "label", "category", "group", "month", "date", "material"}
+
+
+def _build_chart_vis(kwargs: dict) -> VisualizationBlock:
+    """Build a VisualizationBlock in the shape the frontend expects.
+
+    Frontend ChartData: { chartType, title, xAxis, yAxis, data: Record[], series: {key,label,color}[] }
+    """
+    series_data = kwargs.get("series_json", "[]")
+    if isinstance(series_data, str):
+        series_data = json.loads(series_data)
+    if not isinstance(series_data, list):
+        series_data = []
+
+    # Auto-generate series metadata from data keys
+    series_meta = []
+    if series_data:
+        sample = series_data[0] if isinstance(series_data[0], dict) else {}
+        idx = 0
+        for key, val in sample.items():
+            if key.lower() in _LABEL_KEYS:
+                continue
+            if isinstance(val, (int, float)):
+                idx += 1
+                series_meta.append({
+                    "key": key,
+                    "label": key.replace("_", " ").title(),
+                    "color": f"var(--chart-{idx})",
+                })
+
+    return VisualizationBlock(
+        type="chart",
+        data={
+            "chartType": kwargs.get("chart_type", "bar"),
+            "title": kwargs.get("title", ""),
+            "xAxis": kwargs.get("x_label", ""),
+            "yAxis": kwargs.get("y_label", ""),
+            "data": series_data,
+            "series": series_meta,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/stream  — SSE primary endpoint
 # ---------------------------------------------------------------------------
@@ -140,14 +183,15 @@ async def chat_stream(req: ChatRequest):
                         yield _sse_event("text", {"chunk": text})
                 elif kind == "on_tool_start":
                     tool_name = event["name"]
-                    if tool_name != "render_visualization":
-                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
-                    else:
+                    if tool_name == "render_visualization":
                         yield _sse_event("thinking", {"step": "Rendering visualization..."})
+                    elif tool_name == "run_python_analysis":
+                        yield _sse_event("thinking", {"step": "Running statistical analysis..."})
+                    else:
+                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
                 elif kind == "on_tool_end":
                     if event["name"] == "render_visualization":
                         try:
-                            import json
                             kwargs = event['data'].get("input", {})
                             series_data = kwargs.get("series_json", "[]")
                             if isinstance(series_data, str):
@@ -180,7 +224,15 @@ async def chat_stream(req: ChatRequest):
             yield _sse_event("error", {"message": str(e)})
         yield _sse_event("done", {})
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

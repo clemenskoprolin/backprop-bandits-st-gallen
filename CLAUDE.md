@@ -37,7 +37,13 @@ The system is designed so that the LLM produces structured instructions, not UI,
 
 For development, the MongoDB is not docker, but on  202.61.251.60 with port 27017.
 
-You can access it with `mongosh --host 202.61.251.60 --port 27017` for testing. DO NOT CHANGE DATA THERE ON YOUR OWN.
+You can access it with
+```mongosh --host 202.61.251.60 --port 27017 \
+  -u admin \
+  -p olmamessen1st \
+  --authenticationDatabase admin```
+  
+  for testing. DO NOT CHANGE DATA THERE ON YOUR OWN.
 
 ⸻
 

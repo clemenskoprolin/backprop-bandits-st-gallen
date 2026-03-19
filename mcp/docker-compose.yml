@@ -12,7 +12,6 @@ services:
     ports:
       - "3001:3001"
     environment:
-      # MongoDB connection string - use host.docker.internal for WSL2/Docker Desktop
-      - MDB_MCP_CONNECTION_STRING=mongodb://host.docker.internal:27017/txp_clean
+      - MDB_MCP_CONNECTION_STRING=mongodb://admin:olmamessen1st@202.61.251.60:27017/txp_clean?authSource=admin    
     command: ["--transport", "http", "--httpHost", "0.0.0.0", "--httpPort", "3001"]
     restart: unless-stopped

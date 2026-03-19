@@ -1,6 +1,19 @@
 'use client'
 
-import { useState } from 'react'
+import {
+  useState,
+  useEffect,
+  useRef,
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactNode,
+  type ReactElement,
+} from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import {
   ThumbsUpIcon,
   ThumbsDownIcon,
@@ -13,7 +26,8 @@ import {
   BarChart3Icon,
 } from 'lucide-react'
 import { Message } from '@/lib/types'
-import { submitFeedback } from '@/lib/mock-data'
+import { submitFeedback } from '@/lib/api'
+import { useChatStore } from '@/lib/chat-store'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,18 +39,219 @@ import {
 
 interface ChatMessageProps {
   message: Message
+  isActivelyStreaming?: boolean
   onFollowupClick?: (followup: string) => void
+}
+
+// ---------------------------------------------------------------------------
+// Progressive text reveal hook
+// ---------------------------------------------------------------------------
+
+function useAnimatedText(text: string, animate: boolean): string {
+  const [displayed, setDisplayed] = useState(text)
+  const targetRef = useRef(text)
+  const lenRef = useRef(text.length)
+
+  targetRef.current = text
+
+  useEffect(() => {
+    if (!animate) {
+      lenRef.current = text.length
+      setDisplayed(text)
+    }
+  }, [text, animate])
+
+  useEffect(() => {
+    if (!animate) return
+
+    let active = true
+    const tick = () => {
+      if (!active) return
+      const target = targetRef.current
+      if (lenRef.current < target.length) {
+        const remaining = target.length - lenRef.current
+        const add = Math.max(2, Math.ceil(remaining * 0.25))
+        lenRef.current = Math.min(lenRef.current + add, target.length)
+        setDisplayed(target.slice(0, lenRef.current))
+      }
+    }
+    const id = setInterval(tick, 25)
+
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+  }, [animate])
+
+  return displayed
+}
+
+// ---------------------------------------------------------------------------
+// Cursor sentinel — injected into markdown text, replaced with a styled span
+// ---------------------------------------------------------------------------
+
+const CURSOR = '▍'
+
+function replaceCursorInChildren(node: ReactNode): ReactNode {
+  return Children.map(node, (child) => {
+    if (typeof child === 'string') {
+      const idx = child.indexOf(CURSOR)
+      if (idx === -1) return child
+      return (
+        <>
+          {child.slice(0, idx)}
+          <span className="streaming-cursor-caret" aria-hidden />
+          {child.slice(idx + 1)}
+        </>
+      )
+    }
+    if (isValidElement(child)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const el = child as ReactElement<any>
+      if (el.props.children != null) {
+        return cloneElement(el, {}, replaceCursorInChildren(el.props.children))
+      }
+    }
+    return child
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Markdown renderer
+// ---------------------------------------------------------------------------
+
+function MarkdownContent({
+  content,
+  isUser,
+  showCursor,
+}: {
+  content: string
+  isUser: boolean
+  showCursor?: boolean
+}) {
+  const wrap = showCursor
+    ? (children: ReactNode) => replaceCursorInChildren(children)
+    : (children: ReactNode) => children
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      components={{
+        p: ({ children }) => <p className="mb-3 last:mb-0 leading-relaxed">{wrap(children)}</p>,
+        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        em: ({ children }) => <em>{children}</em>,
+        h1: ({ children }) => <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0">{wrap(children)}</h1>,
+        h2: ({ children }) => <h2 className="text-lg font-bold mb-2 mt-3 first:mt-0">{wrap(children)}</h2>,
+        h3: ({ children }) => <h3 className="text-base font-semibold mb-2 mt-3 first:mt-0">{wrap(children)}</h3>,
+        h4: ({ children }) => <h4 className="text-sm font-semibold mb-1 mt-2 first:mt-0">{wrap(children)}</h4>,
+        ul: ({ children }) => <ul className="list-disc list-outside ml-5 mb-3 space-y-1">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-outside ml-5 mb-3 space-y-1">{children}</ol>,
+        li: ({ children }) => <li className="leading-relaxed">{wrap(children)}</li>,
+        blockquote: ({ children }) => (
+          <blockquote className="border-l-3 border-primary/40 pl-3 my-3 italic text-muted-foreground">
+            {wrap(children)}
+          </blockquote>
+        ),
+        hr: () => <hr className="my-4 border-border" />,
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              'underline underline-offset-2 transition-colors',
+              isUser ? 'text-primary-foreground/80 hover:text-primary-foreground' : 'text-primary hover:text-primary/80'
+            )}
+          >
+            {children}
+          </a>
+        ),
+        code: ({ className, children, ...props }) => {
+          const isInline = !className
+          if (isInline) {
+            return (
+              <code
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[0.85em] font-mono',
+                  isUser ? 'bg-primary-foreground/15' : 'bg-foreground/8'
+                )}
+                {...props}
+              >
+                {wrap(children)}
+              </code>
+            )
+          }
+          const language = className?.replace('language-', '') ?? ''
+          return (
+            <div className="my-3 rounded-lg overflow-hidden border border-border">
+              {language && (
+                <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground bg-muted/50 border-b border-border">
+                  {language}
+                </div>
+              )}
+              <pre className="overflow-x-auto p-3 text-sm bg-muted/30">
+                <code className={cn('font-mono text-[0.85em]', className)} {...props}>
+                  {wrap(children)}
+                </code>
+              </pre>
+            </div>
+          )
+        },
+        pre: ({ children }) => <>{children}</>,
+        table: ({ children }) => (
+          <div className="my-3 overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+        tbody: ({ children }) => <tbody>{children}</tbody>,
+        tr: ({ children }) => <tr className="border-b border-border last:border-0">{children}</tr>,
+        th: ({ children }) => (
+          <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">{wrap(children)}</th>
+        ),
+        td: ({ children }) => <td className="px-3 py-2 font-mono text-xs">{wrap(children)}</td>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
 }
 
 export function ChatMessage({
   message,
+  isActivelyStreaming = false,
   onFollowupClick,
 }: ChatMessageProps) {
   const [feedback, setFeedback] = useState<'up' | 'down' | null>(null)
   const [copied, setCopied] = useState(false)
   const [showThinking, setShowThinking] = useState(false)
+  const sessionId = useChatStore((s) => s.currentSession?.session_id)
 
   const isUser = message.role === 'user'
+  const isStreaming = isActivelyStreaming && !isUser
+  const animatedContent = useAnimatedText(message.content, isStreaming)
+  const displayContent = isStreaming ? animatedContent + CURSOR : animatedContent
+
+  const proseRef = useRef<HTMLDivElement>(null)
+  const blockCountRef = useRef(0)
+
+  useEffect(() => {
+    if (!isStreaming || !proseRef.current) {
+      blockCountRef.current = 0
+      return
+    }
+
+    const container = proseRef.current
+    const count = container.children.length
+
+    for (let i = blockCountRef.current; i < count; i++) {
+      ;(container.children[i] as HTMLElement).style.animation =
+        'blockSlideIn 350ms ease-out both'
+    }
+
+    blockCountRef.current = count
+  })
 
   const handleFeedback = async (rating: 'up' | 'down') => {
     if (feedback === rating) {
@@ -44,7 +259,11 @@ export function ChatMessage({
       return
     }
     setFeedback(rating)
-    await submitFeedback({ message_id: message.message_id, rating })
+    await submitFeedback({
+      message_id: message.message_id,
+      session_id: sessionId ?? '',
+      rating,
+    }).catch(() => {})
   }
 
   const handleCopy = async () => {
@@ -90,21 +309,11 @@ export function ChatMessage({
               : 'bg-muted text-foreground'
           )}
         >
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            {message.content.split('\n').map((line, i) => {
-              // Handle bold text
-              const parts = line.split(/(\*\*.*?\*\*)/g)
-              return (
-                <p key={i} className={cn('mb-2 last:mb-0', !line && 'h-4')}>
-                  {parts.map((part, j) => {
-                    if (part.startsWith('**') && part.endsWith('**')) {
-                      return <strong key={j}>{part.slice(2, -2)}</strong>
-                    }
-                    return <span key={j}>{part}</span>
-                  })}
-                </p>
-              )
-            })}
+          <div
+            ref={proseRef}
+            className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+          >
+            <MarkdownContent content={displayContent} isUser={isUser} showCursor={isStreaming} />
           </div>
         </div>
 
@@ -137,7 +346,7 @@ export function ChatMessage({
           </Collapsible>
         )}
 
-        {/* Visualization indicator - shows that a chart was added to dashboard */}
+        {/* Visualization indicator */}
         {!isUser && message.visualization && message.visualization.type !== 'none' && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
             <BarChart3Icon className="h-4 w-4 text-primary" />

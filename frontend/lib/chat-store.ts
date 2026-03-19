@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, Message, Template, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
+import { Session, Message, Template, Visualization, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
 import {
   fetchSessions,
   fetchSession,
@@ -8,8 +8,8 @@ import {
   renameSession,
   saveWidgetLayouts,
   fetchTemplates,
-  sendMessage,
-} from './mock-data'
+  sendMessageStream,
+} from './api'
 
 interface ChatStore {
   // State
@@ -19,6 +19,7 @@ interface ChatStore {
   templates: Template[]
   isLoading: boolean
   isSending: boolean
+  isStreaming: boolean
   showChat: boolean
   showDashboard: boolean
   dashboardWidgets: DashboardWidget[]
@@ -85,6 +86,37 @@ function persistWidgetLayouts(sessionId: string, widgets: DashboardWidget[]) {
   saveWidgetLayouts(sessionId, layouts).catch(() => {})
 }
 
+function addVisualizationWidget(
+  state: ChatStore,
+  visualization: Visualization,
+  messageId: string,
+  queryUsed?: string | null,
+) {
+  const getDefaultSize = (type: string): WidgetSize => {
+    if (type === 'cards') return 'medium'
+    if (type === 'table') return 'large'
+    return 'large'
+  }
+
+  let maxY = 0
+  state.dashboardWidgets.forEach((w) => {
+    const bottomY = w.layout.y + w.layout.h
+    if (bottomY > maxY) maxY = bottomY
+  })
+
+  const size = getDefaultSize(visualization.type)
+  const sizeConfig = WIDGET_SIZE_CONFIG[size]
+
+  return {
+    id: `widget_${messageId}`,
+    messageId,
+    visualization,
+    size,
+    layout: { x: 0, y: maxY, w: sizeConfig.w, h: sizeConfig.h },
+    queryUsed,
+  } satisfies DashboardWidget
+}
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   sessions: [],
   currentSession: null,
@@ -92,6 +124,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   templates: [],
   isLoading: false,
   isSending: false,
+  isStreaming: false,
   showChat: true,
   showDashboard: true,
   dashboardWidgets: [],
@@ -102,6 +135,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const sessions = await fetchSessions()
       set({ sessions })
+    } catch (err) {
+      console.error('Failed to load sessions:', err)
+      set({ sessions: [] })
     } finally {
       set({ isLoading: false })
     }
@@ -110,7 +146,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   loadSession: async (id: string) => {
     const { currentSession, dashboardWidgets } = get()
 
-    // Save current session's widgets to cache before switching
     if (currentSession && currentSession.session_id !== id) {
       set((state) => ({
         _sessionWidgetCache: {
@@ -124,12 +159,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ isLoading: true })
     try {
       const { session, messages } = await fetchSession(id)
-
-      // Restore cached widgets if available, otherwise rebuild from messages
       const cached = get()._sessionWidgetCache[id]
       const widgets = cached ?? buildWidgetsFromMessages(messages)
-
       set({ currentSession: session, messages, dashboardWidgets: widgets })
+    } catch (err) {
+      console.error('Failed to load session:', err)
     } finally {
       set({ isLoading: false })
     }
@@ -143,7 +177,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   createNewSession: async () => {
     const { currentSession, dashboardWidgets } = get()
 
-    // Save outgoing session's widgets
     if (currentSession) {
       set((state) => ({
         _sessionWidgetCache: {
@@ -189,7 +222,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       await deleteSession(currentSession.session_id)
 
-      // Remove from cache
       set((state) => {
         const cache = { ...state._sessionWidgetCache }
         delete cache[currentSession.session_id]
@@ -222,63 +254,114 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       timestamp: new Date().toISOString(),
     }
 
-    set({ messages: [...messages, userMessage], isSending: true })
+    set({ messages: [...messages, userMessage], isSending: true, isStreaming: true })
+
+    // Accumulate streaming state
+    let messageId = `msg_${Date.now()}`
+    let fullText = ''
+    const thinkingSteps: string[] = []
+    let visualization: Visualization | null = null
+    let queryUsed: string | null = null
+    const followups: string[] = []
+    let realSessionId: string | null = null
+
+    // Create the placeholder assistant message for streaming
+    const placeholderId = messageId
+
+    const updateAssistantMessage = () => {
+      set((state) => {
+        const existing = state.messages.find((m) => m.message_id === placeholderId)
+        const msg: Message = {
+          message_id: placeholderId,
+          role: 'assistant',
+          content: fullText,
+          visualization,
+          query_used: queryUsed,
+          timestamp: existing?.timestamp ?? new Date().toISOString(),
+          thinking: thinkingSteps.length > 0 ? [...thinkingSteps] : undefined,
+          followups: followups.length > 0 ? [...followups] : undefined,
+        }
+        if (existing) {
+          return { messages: state.messages.map((m) => (m.message_id === placeholderId ? msg : m)) }
+        }
+        return { messages: [...state.messages, msg] }
+      })
+    }
 
     try {
-      const response = await sendMessage(currentSession.session_id, content)
+      await sendMessageStream(currentSession.session_id, content, {
+        onSession: (data) => {
+          messageId = data.message_id
+          realSessionId = data.session_id
 
-      const assistantMessage: Message = {
-        message_id: response.message_id,
-        role: 'assistant',
-        content: response.text,
-        visualization: response.visualization,
-        query_used: response.query_used,
-        timestamp: new Date().toISOString(),
-        thinking: response.thinking,
-        followups: response.followups,
-      }
+          // Swap temp session ID for real one from backend
+          if (currentSession.session_id.startsWith('temp_') && realSessionId) {
+            const oldId = currentSession.session_id
+            set((state) => {
+              const updatedSession = { ...currentSession, session_id: realSessionId! }
+              return {
+                currentSession: updatedSession,
+                sessions: state.sessions.map((s) =>
+                  s.session_id === oldId ? { ...s, session_id: realSessionId! } : s
+                ),
+              }
+            })
+          }
+        },
+        onThinking: (step) => {
+          thinkingSteps.push(step)
+          updateAssistantMessage()
+        },
+        onQuery: (query) => {
+          queryUsed = query
+        },
+        onText: (chunk) => {
+          fullText += chunk
+          updateAssistantMessage()
+        },
+        onVisualization: (vis) => {
+          visualization = vis
+          updateAssistantMessage()
 
-      // Add visualization to dashboard if present
-      if (response.visualization && response.visualization.type !== 'none') {
-        const existingWidgets = get().dashboardWidgets
-        let maxY = 0
-        existingWidgets.forEach(w => {
-          const bottomY = w.layout.y + w.layout.h
-          if (bottomY > maxY) maxY = bottomY
-        })
+          // Add widget to dashboard
+          if (vis.type !== 'none') {
+            const widget = addVisualizationWidget(get(), vis, placeholderId, queryUsed)
+            set((state) => ({
+              dashboardWidgets: [...state.dashboardWidgets, widget],
+            }))
+          }
+        },
+        onFollowups: (suggestions) => {
+          followups.push(...suggestions)
+          updateAssistantMessage()
+        },
+        onError: (error) => {
+          fullText += `\n\n*Error: ${error}*`
+          updateAssistantMessage()
+        },
+        onDone: () => {
+          // Final update with all accumulated data
+          updateAssistantMessage()
 
-        const getDefaultSize = (type: string): WidgetSize => {
-          if (type === 'cards') return 'medium'
-          if (type === 'table') return 'large'
-          return 'large'
-        }
-
-        const size = getDefaultSize(response.visualization.type)
-        const sizeConfig = WIDGET_SIZE_CONFIG[size]
-
-        const newWidget: DashboardWidget = {
-          id: `widget_${response.message_id}`,
-          messageId: response.message_id,
-          visualization: response.visualization,
-          size,
-          layout: {
-            x: 0,
-            y: maxY,
-            w: sizeConfig.w,
-            h: sizeConfig.h,
-          },
-          queryUsed: response.query_used,
-        }
-        set((state) => ({
-          dashboardWidgets: [...state.dashboardWidgets, newWidget],
-        }))
-      }
-
-      set((state) => ({
-        messages: [...state.messages, assistantMessage],
-      }))
+          // Auto-title: use first user message as session title
+          const state = get()
+          if (state.currentSession && !state.currentSession.title?.trim() || state.currentSession?.title === 'New Analysis') {
+            const title = content.slice(0, 60)
+            set((s) => ({
+              currentSession: s.currentSession ? { ...s.currentSession, title } : null,
+              sessions: s.sessions.map((sess) =>
+                sess.session_id === s.currentSession?.session_id ? { ...sess, title } : sess
+              ),
+            }))
+          }
+        },
+      })
+    } catch (err) {
+      console.error('Stream error:', err)
+      fullText += '\n\n*Failed to connect to the server. Please check that the backend is running.*'
+      updateAssistantMessage()
     } finally {
-      set({ isSending: false })
+      set({ isSending: false, isStreaming: false })
     }
   },
 
@@ -302,7 +385,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const layoutUpdate = layouts.find((l) => l.id === w.id)
         return layoutUpdate ? { ...w, layout: layoutUpdate.layout } : w
       })
-      // Also update the cache for the current session
       const sid = state.currentSession?.session_id
       const newCache = sid
         ? { ...state._sessionWidgetCache, [sid]: updated }

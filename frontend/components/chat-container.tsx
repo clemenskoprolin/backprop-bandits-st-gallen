@@ -43,6 +43,7 @@ export function ChatContainer() {
     messages,
     isLoading,
     isSending,
+    isStreaming,
     showChat,
     showDashboard,
     dashboardWidgets,
@@ -308,14 +309,19 @@ export function ChatContainer() {
             ) : (
               <ScrollArea className="h-full" ref={scrollRef}>
                 <div className="mx-auto max-w-3xl py-4">
-                  {messages.map((message) => (
+                  {messages.map((message, index) => (
                     <ChatMessage
                       key={message.message_id}
                       message={message}
+                      isActivelyStreaming={
+                        isStreaming &&
+                        message.role === 'assistant' &&
+                        index === messages.length - 1
+                      }
                       onFollowupClick={handleFollowupClick}
                     />
                   ))}
-                  {isSending && (
+                  {isSending && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
                     <div className="flex items-center gap-3 px-4 py-4">
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
                         <SparklesIcon className="h-4 w-4 animate-pulse text-primary" />

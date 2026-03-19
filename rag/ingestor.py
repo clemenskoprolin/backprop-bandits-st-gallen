@@ -12,7 +12,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 CHROMA_PATH = os.getenv("CHROMA_PATH")
 
 
-def ingest_files(file_paths):
+def ingest_files(file_paths, session_id):
     """
     Accepts a list of file paths (temp files from Streamlit),
     processes them, and updates the Vector DB.
@@ -45,14 +45,15 @@ def ingest_files(file_paths):
     # Embed & Store (Incremental Update)
     embedding_func = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     
+    session_db_path = os.path.join(CHROMA_PATH, session_id)
     Chroma.from_documents(
         documents=chunks,
         embedding=embedding_func,
-        persist_directory=CHROMA_PATH,
+        persist_directory=session_db_path,
         collection_metadata={"hnsw:space": "cosine"}
     )
     
-    print(f"Ingestion Complete. Added to {CHROMA_PATH}")
+    print(f"Ingestion Complete. Added to {session_db_path}")
     return True
 
 def clear_database():

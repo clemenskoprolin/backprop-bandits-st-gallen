@@ -1,4 +1,5 @@
 import json
+import concurrent.futures
 from typing import Literal
 from langchain_core.tools import tool
 from langchain_anthropic import ChatAnthropic
@@ -20,11 +21,11 @@ MCP_SERVERS = {
     }
 }
 
-# Global MCP client (initialized via lifespan)
-mcp_client: MultiServerMCPClient = None
-mcp_tools: list = []
+# # Global MCP client (initialized via lifespan)
+# mcp_client: MultiServerMCPClient = None
+# mcp_tools: list = []
 
-@tool 
+@tool
 async def get_sample_documents() -> str:
     """Returns sample documents from a collection as a string"""
 
@@ -86,7 +87,7 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
     return "Answer submitted."
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [get_aggregated_data_for_chart]
+custom_tools = [get_aggregated_data_for_chart, run_python_analysis]
 tool_node = ToolNode(custom_tools)
 visualization_tool = ToolNode([render_visualization])
 
@@ -117,9 +118,7 @@ async def init_mcp_client():
         tool_node = ToolNode(_all_tools)
         llm_with_tools = llm.bind_tools(_all_tools)
 
-        # Rebuild the agent with new tools
-        # agent = build_agent()
-        print("Agent rebuilt with MCP tools")
+
 
         return mcp_tools
     except Exception as e:
@@ -133,6 +132,83 @@ async def shutdown_mcp_client():
     mcp_client = None
 
 
+
+system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
+
+AVAILABLE TOOLS:
+
+MongoDB (from MCP server):
+- `find` - Query documents with filters, projection, and sorting
+- `aggregate` - Run aggregation pipelines
+- `collection-schema` - Understand collection structure
+- `list-collections` - See available collections
+- `count` - Count matching documents
+
+Visualization:
+- `get_aggregated_data_for_chart` - Recharts-formatted aggregations
+- `render_visualization` - Display charts on the UI
+
+Statistical Analysis:
+- `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data
+
+WORKFLOW FOR STATISTICAL QUESTIONS:
+1. Use `find` or `aggregate` to retrieve raw data as a JSON list.
+2. Pass that JSON string directly into `run_python_analysis` as `data_json`.
+3. Write a Python snippet that assigns the final answer to `result`.
+4. Use the returned `result` to compose your natural-language answer.
+
+Example — significance test between two groups:
+  code = \"\"\"
+  group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
+  group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
+  t, p = stats.ttest_ind(group_a, group_b)
+  result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
+  \"\"\"
+
+Example — trend / degradation over time:
+  code = \"\"\"
+  vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
+  x = np.arange(len(vals))
+  slope, _, _, p, _ = stats.linregress(x, vals)
+  result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
+  \"\"\"
+
+ALWAYS call `render_visualization` when showing aggregated or statistical data.
+"""
+
+output_system_prompt = """You are a material testing AI assistant.
+
+Based on the tool results and analysis above:
+1. Write a clear, concise answer to the user's question
+2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
+"""
+
+intermediate_output_system_prompt = """briefly summarize the findings
+"""
+
+self_critic_system_prompt = critic_system_prompt = """You are a critical reviewer of material testing analysis.
+
+Review the previous conversation history and output ONLY a JSON object:
+{
+  "verdict": "accept|retry",
+  "confidence": "high|medium|low",
+  "text": "The verdict you made and why you made this verdict",
+  "missing_data": "what tool should be called to improve the answer, or null",
+  "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
+  "tool_args": {...} or null,
+  "caveats": ["caveat 1", "caveat 2"]
+}
+
+Verdict rules:
+- accept: answer is well supported by data
+- retry: answer needs more data, specify which tool to call
+- escalate: query is too complex, needs deeper analysis
+"""
+
+visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
+You should inspect if the previous results would benefit from a visualization. If you want to visualize
+use the render_visualization function to visualize the data. If not, still call the function with none values."""
+
 def call_model(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
@@ -141,11 +217,11 @@ def call_model(state: MessagesState):
     return {"messages": [response]}
 
 
-def should_continue(state: MessagesState) -> Literal["tools", END]:
+def should_continue(state: MessagesState) -> Literal["tools", "output"]:
     last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "tools"
-    return END
+    return "output"
 
 
 def output_node(state: MessagesState):
@@ -224,7 +300,7 @@ class Agent:
         self.message = message
         self.similar_text = similar_text
         similar_data = "you are given the following similar text from a vectordb: " + self.similar_text
-        
+
         global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
         
         be_professional = "  Be very professional!"
@@ -257,7 +333,7 @@ class Agent:
         - `render_visualization` - Display charts on the UI
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
-        """ + similar_data + be_professional
+        """ + similar_data
 
         output_system_prompt = """You are a material testing AI assistant.
 
@@ -286,11 +362,11 @@ class Agent:
         - accept: answer is well supported by data
         - retry: answer needs more data, specify which tool to call
         - escalate: query is too complex, needs deeper analysis
-        """ + similar_data + be_professional
+        """ + similar_data
 
         visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. If not, still call the function with none values.""" + similar_data + be_professional
+        use the render_visualization function to visualize the data. If not, still call the function with none values.""" + similar_data
 
 
     def build_agent(self):
@@ -303,16 +379,12 @@ class Agent:
         graph_builder.add_node("output", output_node)
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "visualizer")
-        graph_builder.add_edge("visualizer", "visual_tool")
-        graph_builder.add_edge("visual_tool", "output")
+        graph_builder.add_edge("tools", "agent")
+        # graph_builder.add_edge("visualizer", "visual_tool")
+        # graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", END)
         return graph_builder.compile(checkpointer=memory)
-    
+
     def create(self):
         agent = self.build_agent()
         return agent
-
-
-
-# Initial agent (rebuilt on startup with MCP tools)
