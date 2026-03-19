@@ -460,7 +460,17 @@ class Agent:
 
         visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. Visualize if possible! If not, still call the function with none values.""" + similar_data
+        use the render_visualization function to visualize the data. Visualize if possible! 
+        Render a chart on the user's dashboard.
+        ALWAYS call this when displaying aggregated/statistical data.
+
+        Args:
+            chart_type: 'Bar'
+            title: Chart title.
+            x_label: X axis label.
+            y_label: Y axis label.
+            series_json: Dataset as JSON string from get_aggregated_data_for_chart or formatted data.
+        If not, still call the function with none values.""" + similar_data
 
 
     def build_agent(self):

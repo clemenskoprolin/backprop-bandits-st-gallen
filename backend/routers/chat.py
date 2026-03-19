@@ -136,26 +136,11 @@ def _build_chart_vis(kwargs: dict) -> VisualizationBlock:
 
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
-    """
-    Server-Sent Events stream.
-
-    The client receives a sequence of typed events:
-      session    → { session_id, message_id }
-      thinking   → { step: str }          (one or more)
-      query      → { query_used: str }
-      text       → { chunk: str }          (one or more)
-      visualization → { type, data }
-      followups  → { suggestions: [str] }
-      done       → {}
-    """
     session = _get_or_create_session(req.session_id)
     message_id = str(uuid4())
-
-    # Record user message
     session.messages.append(Message(role="user", content=req.message))
 
     async def event_generator():
-        # 1. Identify session
         yield _sse_event("session", {"session_id": session.session_id, "message_id": message_id})
         try:
             from src.agent import Agent
@@ -167,6 +152,8 @@ async def chat_stream(req: ChatRequest):
             
             full_text = ""
             visualization = None
+            followups = []
+            thinking = []
             
             async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
                 kind = event["event"]
@@ -181,33 +168,49 @@ async def chat_stream(req: ChatRequest):
                     if text:
                         full_text += text
                         yield _sse_event("text", {"chunk": text})
+
                 elif kind == "on_tool_start":
                     tool_name = event["name"]
                     if tool_name == "render_visualization":
                         yield _sse_event("thinking", {"step": "Rendering visualization..."})
                     elif tool_name == "run_python_analysis":
                         yield _sse_event("thinking", {"step": "Running statistical analysis..."})
+                    elif tool_name == "submit_answer":
+                        pass  # don't show this as a thinking step
                     else:
+                        thinking.append(f"Used tool: {tool_name}")
                         yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
+
                 elif kind == "on_tool_end":
-                    if event["name"] == "render_visualization":
+                    tool_name = event["name"]
+                    
+                    if tool_name == "render_visualization":
                         try:
                             kwargs = event['data'].get("input", {})
                             series_data = kwargs.get("series_json", "[]")
                             if isinstance(series_data, str):
                                 series_data = json.loads(series_data)
-                                
-                            vis = {"chart_type": kwargs.get("chart_type", "bar"),
-                                    "title": kwargs.get("title", ""),
-                                    "x_label": kwargs.get("x_label", ""),
-                                    "y_label": kwargs.get("y_label", ""),
-                                    "series": series_data,}
-                            visualization = vis
-                            yield _sse_event("visualization", vis.model_dump())
+                            visualization = {
+                                "chart_type": kwargs.get("chart_type", "bar"),
+                                "title": kwargs.get("title", ""),
+                                "x_label": kwargs.get("x_label", ""),
+                                "y_label": kwargs.get("y_label", ""),
+                                "series": series_data,
+                            }
+                            yield _sse_event("visualization", visualization)
                         except Exception as e:
                             print("Visualization rendering error:", e)
 
-            # 7. Persist assistant message
+                    elif tool_name == "submit_answer":
+                        try:
+                            kwargs = event['data'].get("input", {})
+                            answer = kwargs.get("answer", "")
+                            followups = kwargs.get("hypotheses", [])
+                            full_text = answer  # override streamed text with structured answer
+                            yield _sse_event("followups", {"suggestions": followups})
+                        except Exception as e:
+                            print("submit_answer parsing error:", e)
+
             session.messages.append(
                 Message(
                     message_id=message_id,
