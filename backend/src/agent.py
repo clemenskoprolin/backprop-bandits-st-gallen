@@ -16,7 +16,7 @@ from langchain_core.messages import trim_messages
 load_dotenv()
 
 # MCP Server Configuration - Streamable HTTP transport (Docker)
-credentials = base64.b64encode(b"admin:olmamessen1st").decode()
+# credentials = base64.b64encode(b"admin:olmamessen1st").decode()
 
 # MCP_SERVERS = {
 #     "mongodb": {
@@ -370,7 +370,7 @@ def visualizer(state: MessagesState):
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message
-    messages = messages + [HumanMessage(content="Based on the results, decide if visualization is needed.")]
+    messages = messages + [HumanMessage(content="Based on the results, decide if visualization is needed and use render_visualization function to visualize.")]
     response = llm_visualizer.invoke(messages)
     print("hi",response)
     return {"messages": [response]}
@@ -471,9 +471,9 @@ class Agent:
         graph_builder.add_node("visualizer", visualizer)
         graph_builder.add_node("visual_tool", visualization_tool)
         graph_builder.add_node("output", output_node)
-        graph_builder.add_edge(START, "agent")
-        graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "visualizer")
+        graph_builder.add_edge(START, "visualizer")
+        # graph_builder.add_conditional_edges("agent", should_continue)
+        # graph_builder.add_edge("tools", "visualizer")
         graph_builder.add_edge("visualizer", "visual_tool")
         graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", END)

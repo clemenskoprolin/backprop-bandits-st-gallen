@@ -16,7 +16,7 @@ if (stream):
 else:
     response = httpx.post(
         "http://localhost:8000/api/chat",
-        json={"message": "Aggregate all fineness from groups where upper force limit is > or < than 3000 database txp_clean and collection _tests", "session_id": None},
+        json={"message": "Generate a bar chart with data x=[1,2,3,4] y=[5,6,7,8]", "session_id": None},
         timeout=60.0  # ← outside json, as httpx parameter
     )
     print(response.json())
