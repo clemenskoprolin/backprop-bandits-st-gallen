@@ -13,7 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
-RAG_URL = os.getenv("RAG_URL", "http://localhost:8000")
+RAG_URL = os.getenv("RAG_URL", "http://localhost:3002")
 
 
 @router.post("/upload")
@@ -33,6 +33,7 @@ async def upload_pdf(
 
 
     try:
+        print("Session Id", session_id)
         response = requests.post(
             f"{RAG_URL}/ingest",
             json={"file_paths": [tmp_path], "session_id": session_id},

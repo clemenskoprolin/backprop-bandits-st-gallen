@@ -52,6 +52,7 @@ export function ChatContainer() {
     sendUserMessage,
     setShowChat,
     setShowDashboard,
+    createNewSession,
   } = useChatStore()
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -96,7 +97,8 @@ export function ChatContainer() {
     setIsDragOver(false)
     const file = Array.from(e.dataTransfer.files).find((f) => f.name.toLowerCase().endsWith('.pdf'))
     if (!file) return
-    const sid = currentSession?.session_id ?? `temp_${Date.now()}`
+    if (!currentSession) await createNewSession()
+    const sid = useChatStore.getState().currentSession!.session_id
     try {
       await uploadPdf(file, sid)
       setUploadToast({ message: `"${file.name}" ingested into knowledge base`, type: 'success' })
@@ -391,7 +393,15 @@ export function ChatContainer() {
           </div>
 
           <div className="shrink-0 border-t border-border">
-            <ChatInput onSend={handleSend} isSending={isSending} sessionId={currentSession?.session_id ?? null} />
+            <ChatInput
+              onSend={handleSend}
+              isSending={isSending}
+              sessionId={currentSession?.session_id ?? null}
+              onEnsureSession={async () => {
+                if (!useChatStore.getState().currentSession) await createNewSession()
+                return useChatStore.getState().currentSession!.session_id
+              }}
+            />
           </div>
         </div>
       )}

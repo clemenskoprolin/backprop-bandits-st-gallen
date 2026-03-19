@@ -18,7 +18,12 @@ retriever = RAGRetriever()
 
 @app.post("/ingest")
 def ingest(request: IngestRequest):
-    success = ingest_files(request.file_paths, request.session_id)
+    try:
+        success = ingest_files(request.file_paths, request.session_id)
+    except Exception as e:
+        success = False
+        print("ingest failed:", e)
+    print(success)
     return {"success": success}
 
 @app.post("/generate_context")

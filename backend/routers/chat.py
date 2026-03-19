@@ -75,7 +75,7 @@ STUB_SCHEMA = DatasetSchema(
 def _get_or_create_session(session_id: str | None) -> Session:
     if session_id and session_id in _sessions:
         return _sessions[session_id]
-    new_session = Session(session_id=str(uuid4()))
+    new_session = Session(session_id=session_id if session_id else str(uuid4()))
     _sessions[new_session.session_id] = new_session
     return new_session
 
@@ -97,7 +97,7 @@ def get_similarity_by_query(message: str, session_id):
     try:
         print("Querying")
         print(message, session_id)
-        response = requests.post("http://localhost:5000/generate_context", json={
+        response = requests.post("http://localhost:3002/generate_context", json={
             "query": message,
             "session_id": session_id
         })

@@ -306,7 +306,7 @@ export async function sendMessageStream(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message,
-      session_id: sessionId?.startsWith('temp_') ? null : sessionId,
+      session_id: sessionId,
       dashboard_widgets: dashboardWidgets ?? [],
     }),
   })
