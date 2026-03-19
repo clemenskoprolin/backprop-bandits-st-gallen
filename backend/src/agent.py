@@ -284,11 +284,11 @@ def call_model(state: MessagesState):
     return {"messages": [response]}
 
 
-def should_continue(state: MessagesState) -> Literal["tools", END]:
+def should_continue(state: MessagesState) -> Literal["tools", "output"]:
     last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "tools"
-    return END
+    return "output"
 
 
 def output_node(state: MessagesState):
@@ -431,7 +431,7 @@ class Agent:
         graph_builder.add_node("output", output_node)
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "output")
+        graph_builder.add_edge("tools", "agent")
         # graph_builder.add_edge("visualizer", "visual_tool")
         # graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", END)
@@ -440,8 +440,3 @@ class Agent:
     def create(self):
         agent = self.build_agent()
         return agent
-
-
-
-# Initial agent (rebuilt on startup with MCP tools)
-agent = build_agent()
