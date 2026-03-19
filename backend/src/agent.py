@@ -384,7 +384,7 @@ def output_node(state: MessagesState):
     #     import json
     #     critique = json.loads(last_message.content)
     #     print("Verdict:", critique["verdict"])
-    #     if critique["verdict"] == "retry":
+    #     if critique["verdict"] == "retry": 
     #         return "output"
     #     else:
     #         return "output" 
