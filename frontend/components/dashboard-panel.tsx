@@ -12,6 +12,7 @@ import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   GripVerticalIcon,
+  FileTextIcon,
 } from 'lucide-react'
 import {
   Bar,
@@ -757,7 +758,46 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   const { dashboardWidgets, removeWidget, updateWidgetLayouts } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+
+  const handleExportPDF = useCallback(async () => {
+    if (!gridRef.current || dashboardWidgets.length === 0) return
+    setIsExporting(true)
+    try {
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+      const canvas = await html2canvas(gridRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      })
+      const imgData = canvas.toDataURL('image/png')
+      // A4 dimensions in mm
+      const pageW = 210
+      const pageH = 297
+      const margin = 10
+      const usableW = pageW - margin * 2
+      const usableH = pageH - margin * 2
+      const canvasAspect = canvas.width / canvas.height
+      let imgW = usableW
+      let imgH = usableW / canvasAspect
+      // If taller than page, scale down
+      if (imgH > usableH) {
+        imgH = usableH
+        imgW = usableH * canvasAspect
+      }
+      const pdf = new jsPDF({ orientation: imgH > imgW ? 'portrait' : 'landscape', unit: 'mm', format: 'a4' })
+      pdf.addImage(imgData, 'PNG', margin, margin, imgW, imgH)
+      pdf.save('dashboard.pdf')
+    } finally {
+      setIsExporting(false)
+    }
+  }, [dashboardWidgets])
 
   // Keep refs to latest values so pointer handlers always read fresh data
   const widgetsRef = useRef(dashboardWidgets)
@@ -980,6 +1020,22 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             {dashboardWidgets.length} widget{dashboardWidgets.length !== 1 ? 's' : ''}
           </p>
         </div>
+        {dashboardWidgets.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleExportPDF}
+                disabled={isExporting}
+              >
+                <FileTextIcon className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export as PDF</TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Content */}
@@ -990,13 +1046,13 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
               <div className="rounded-full bg-muted p-4 mb-4">
                 <LayoutDashboardIcon className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="font-medium text-foreground mb-1">No visualizations yet</h3>
+              <h3 className="font-medium text-foreground mb-1">Ask me anything to visualise the data</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Ask a question in the chat and visualizations will appear here as interactive widgets.
+                Your charts and tables will appear here as interactive widgets.
               </p>
             </div>
           ) : (
-            <div style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
+            <div ref={gridRef} style={{ position: 'relative', width: gridWidth, height: gridHeight }}>
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
                 const isBeingResized = resizeVisual?.widgetId === widget.id
