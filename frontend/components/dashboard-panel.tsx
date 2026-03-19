@@ -16,13 +16,27 @@ import {
 import {
   Bar,
   BarChart,
+  ComposedChart,
   Line,
   LineChart,
   Area,
   AreaChart,
+  Pie,
+  PieChart,
+  Radar,
+  RadarChart,
+  RadialBar,
+  RadialBarChart,
+  PolarAngleAxis,
+  PolarGrid,
   XAxis,
   YAxis,
   CartesianGrid,
+  Label,
+  Cell,
+  Scatter,
+  Rectangle,
+  type RectangleProps,
 } from 'recharts'
 import { useChatStore } from '@/lib/chat-store'
 import { DashboardWidget, ChartData, TableData, CardsData } from '@/lib/types'
@@ -59,17 +73,52 @@ interface DashboardPanelProps {
 }
 
 function ChartVisualization({ data, fullHeight = false }: { data: ChartData; fullHeight?: boolean }) {
+  // Build chartConfig: prefer backend-provided chartConfig, fall back to series metadata
   const chartConfig: ChartConfig = {}
-  data.series.forEach((s) => {
-    chartConfig[s.key] = {
-      label: s.label,
-      color: s.color || 'var(--chart-1)',
-    }
-  })
+  if (data.chartConfig) {
+    Object.entries(data.chartConfig).forEach(([key, val]) => {
+      chartConfig[key] = {
+        label: val.label,
+        color: val.color || 'var(--chart-1)',
+      }
+    })
+  } else {
+    data.series.forEach((s) => {
+      chartConfig[s.key] = {
+        label: s.label,
+        color: s.color || 'var(--chart-1)',
+      }
+    })
+  }
 
-  const xAxisKey = Object.keys(data.data[0] || {}).find(
-    (k) => !data.series.some((s) => s.key === k)
-  ) || 'name'
+  // For pie/radial charts, add per-item configs from data records with "fill"
+  // so tooltips/legends resolve the correct label and color per slice
+  if (data.chartType === 'pie' || data.chartType === 'radial') {
+    const xKey = data.xAxisKey || 'name'
+    data.data.forEach((d, i) => {
+      const name = String(d[xKey] || `Item ${i + 1}`)
+      const lowerName = name.toLowerCase().replace(/\s+/g, '_')
+      chartConfig[lowerName] = {
+        label: name,
+        color: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+      }
+    })
+  }
+
+  // Determine series keys from chartConfig or series metadata
+  const seriesKeys = data.chartConfig
+    ? Object.keys(data.chartConfig)
+    : data.series.map((s) => s.key)
+
+  // x-axis key: prefer explicit xAxisKey, then xAxis, then auto-detect
+  const xAxisKey = data.xAxisKey
+    || data.xAxis
+    || Object.keys(data.data[0] || {}).find(
+      (k) => !seriesKeys.includes(k)
+    ) || 'name'
+
+  const getColor = (key: string, index: number) =>
+    chartConfig[key]?.color || `var(--chart-${(index % 5) + 1})`
 
   const renderChart = () => {
     switch (data.chartType) {
@@ -89,14 +138,14 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Line
-                key={s.key}
+                key={key}
                 type="monotone"
-                dataKey={s.key}
-                stroke={s.color || `var(--chart-${i + 1})`}
+                dataKey={key}
+                stroke={getColor(key, i)}
                 strokeWidth={2}
-                dot={{ fill: s.color || `var(--chart-${i + 1})`, r: 3 }}
+                dot={{ fill: getColor(key, i), r: 3 }}
               />
             ))}
           </LineChart>
@@ -117,19 +166,276 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Area
-                key={s.key}
+                key={key}
                 type="monotone"
-                dataKey={s.key}
-                fill={s.color || `var(--chart-${i + 1})`}
+                dataKey={key}
+                fill={getColor(key, i)}
                 fillOpacity={0.3}
-                stroke={s.color || `var(--chart-${i + 1})`}
+                stroke={getColor(key, i)}
                 strokeWidth={2}
               />
             ))}
           </AreaChart>
         )
+      case 'pie': {
+        // For pie charts, use first series key as the value key
+        const valueKey = seriesKeys[0] || 'value'
+        const pieData = data.data.map((d, i) => ({
+          ...d,
+          fill: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+        }))
+        return (
+          <PieChart>
+            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+            <Pie
+              data={pieData}
+              dataKey={valueKey}
+              nameKey={xAxisKey}
+              cx="50%"
+              cy="50%"
+              innerRadius="40%"
+              outerRadius="70%"
+              strokeWidth={2}
+            >
+              {pieData.map((entry, i) => (
+                <Cell key={i} fill={entry.fill as string} />
+              ))}
+              <Label
+                content={({ viewBox }) => {
+                  if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                    const total = data.data.reduce((sum, d) => sum + (Number(d[valueKey]) || 0), 0)
+                    return (
+                      <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                        <tspan x={viewBox.cx} y={viewBox.cy} className="fill-foreground text-2xl font-bold">
+                          {total.toLocaleString()}
+                        </tspan>
+                        <tspan x={viewBox.cx} y={(viewBox.cy || 0) + 20} className="fill-muted-foreground text-xs">
+                          Total
+                        </tspan>
+                      </text>
+                    )
+                  }
+                }}
+              />
+            </Pie>
+          </PieChart>
+        )
+      }
+      case 'radar':
+        return (
+          <RadarChart data={data.data} cx="50%" cy="50%" outerRadius="70%">
+            <PolarGrid className="stroke-border" />
+            <PolarAngleAxis
+              dataKey={xAxisKey}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+            />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            {seriesKeys.map((key, i) => (
+              <Radar
+                key={key}
+                dataKey={key}
+                fill={getColor(key, i)}
+                fillOpacity={0.3}
+                stroke={getColor(key, i)}
+                strokeWidth={2}
+              />
+            ))}
+          </RadarChart>
+        )
+      case 'radial': {
+        const valueKey = seriesKeys[0] || 'value'
+        const radialData = data.data.map((d, i) => ({
+          ...d,
+          fill: (d.fill as string) || `var(--chart-${(i % 5) + 1})`,
+        }))
+        return (
+          <RadialBarChart
+            data={radialData}
+            innerRadius="30%"
+            outerRadius="100%"
+            startAngle={180}
+            endAngle={0}
+          >
+            <ChartTooltip content={<ChartTooltipContent nameKey={xAxisKey} />} />
+            <RadialBar
+              dataKey={valueKey}
+              background
+            >
+              {radialData.map((entry, i) => (
+                <Cell key={i} fill={entry.fill as string} />
+              ))}
+            </RadialBar>
+          </RadialBarChart>
+        )
+      }
+      case 'boxplot': {
+        // Data format: [{ name, min, q1, median, q3, max, ...optional outliers[] }]
+        // We render: invisible bar from 0→min, bar from min→q1 (lower whisker region),
+        // bar from q1→q3 (the box), then custom shapes for whiskers and median.
+        const boxData = data.data.map((d) => ({
+          ...d,
+          // Stacked bar segments: base (invisible), box (q1→q3)
+          _base: Number(d.q1),            // invisible spacer
+          _box: Number(d.q3) - Number(d.q1), // IQR box height
+          _median: Number(d.median),
+          _min: Number(d.min),
+          _max: Number(d.max),
+        }))
+
+        // Custom shape for the IQR box — also draws whiskers and median
+        const BoxWithWhiskers = (props: RectangleProps & { payload?: Record<string, number> }) => {
+          const { x, y, width, height, payload } = props
+          if (x == null || y == null || width == null || height == null || !payload) return null
+
+          const yScale = (val: number) => {
+            // Map value to pixel: y is top of box (q3), y+height is bottom (q1)
+            const q1 = payload._base
+            const q3 = q1 + payload._box
+            if (q3 === q1) return y
+            return y + height * (1 - (val - q1) / (q3 - q1))
+          }
+
+          const midX = x + width / 2
+          const whiskerW = width * 0.4
+          const minY = yScale(payload._max)
+          const maxY = yScale(payload._min)
+          const medianY = yScale(payload._median)
+
+          return (
+            <g>
+              {/* IQR Box */}
+              <Rectangle
+                x={x}
+                y={y}
+                width={width}
+                height={height}
+                fill="var(--chart-1)"
+                fillOpacity={0.3}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                radius={[4, 4, 4, 4]}
+              />
+              {/* Median line */}
+              <line
+                x1={x + 2}
+                x2={x + width - 2}
+                y1={medianY}
+                y2={medianY}
+                stroke="var(--chart-1)"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+              />
+              {/* Upper whisker (vertical line from q3 to max) */}
+              <line
+                x1={midX}
+                x2={midX}
+                y1={y}
+                y2={minY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+              />
+              {/* Upper whisker cap */}
+              <line
+                x1={midX - whiskerW / 2}
+                x2={midX + whiskerW / 2}
+                y1={minY}
+                y2={minY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+              />
+              {/* Lower whisker (vertical line from q1 to min) */}
+              <line
+                x1={midX}
+                x2={midX}
+                y1={y + height}
+                y2={maxY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+              />
+              {/* Lower whisker cap */}
+              <line
+                x1={midX - whiskerW / 2}
+                x2={midX + whiskerW / 2}
+                y1={maxY}
+                y2={maxY}
+                stroke="var(--chart-1)"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+              />
+            </g>
+          )
+        }
+
+        // Custom tooltip for boxplot
+        const BoxPlotTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: Record<string, unknown> }> }) => {
+          if (!active || !payload?.length) return null
+          const d = payload[0].payload
+          return (
+            <div className="border-border/50 bg-background rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
+              <p className="font-medium mb-1">{String(d[xAxisKey] || '')}</p>
+              <div className="grid gap-0.5 text-muted-foreground">
+                <span>Max: <span className="text-foreground font-mono">{Number(d._max).toLocaleString()}</span></span>
+                <span>Q3: <span className="text-foreground font-mono">{Number(d._base) + Number(d._box)}</span></span>
+                <span>Median: <span className="text-foreground font-mono">{Number(d._median).toLocaleString()}</span></span>
+                <span>Q1: <span className="text-foreground font-mono">{Number(d._base).toLocaleString()}</span></span>
+                <span>Min: <span className="text-foreground font-mono">{Number(d._min).toLocaleString()}</span></span>
+              </div>
+            </div>
+          )
+        }
+
+        // Compute Y domain with padding
+        const allMin = Math.min(...boxData.map((d) => d._min))
+        const allMax = Math.max(...boxData.map((d) => d._max))
+        const padding = (allMax - allMin) * 0.1 || 1
+        const yDomain = [Math.floor(allMin - padding), Math.ceil(allMax + padding)]
+
+        return (
+          <ComposedChart data={boxData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+            <XAxis
+              dataKey={xAxisKey}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+              tickLine={{ stroke: 'var(--border)' }}
+              axisLine={{ stroke: 'var(--border)' }}
+            />
+            <YAxis
+              domain={yDomain}
+              tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+              tickLine={{ stroke: 'var(--border)' }}
+              axisLine={{ stroke: 'var(--border)' }}
+            />
+            <ChartTooltip content={<BoxPlotTooltip />} />
+            {/* Invisible spacer bar from 0 to q1 */}
+            <Bar dataKey="_base" stackId="box" fill="transparent" barSize={40} />
+            {/* IQR box from q1 to q3, with custom shape that also draws whiskers + median */}
+            <Bar
+              dataKey="_box"
+              stackId="box"
+              barSize={40}
+              shape={<BoxWithWhiskers />}
+            />
+            {/* Outlier scatter points if present */}
+            {data.data.some((d) => Array.isArray(d.outliers)) && (
+              <Scatter
+                data={data.data.flatMap((d) =>
+                  Array.isArray(d.outliers)
+                    ? (d.outliers as number[]).map((v) => ({ [xAxisKey]: d[xAxisKey], value: v }))
+                    : []
+                )}
+                dataKey="value"
+                fill="var(--chart-2)"
+                r={3}
+              />
+            )}
+          </ComposedChart>
+        )
+      }
       case 'bar':
       default:
         return (
@@ -147,11 +453,11 @@ function ChartVisualization({ data, fullHeight = false }: { data: ChartData; ful
               axisLine={{ stroke: 'var(--border)' }}
             />
             <ChartTooltip content={<ChartTooltipContent />} />
-            {data.series.map((s, i) => (
+            {seriesKeys.map((key, i) => (
               <Bar
-                key={s.key}
-                dataKey={s.key}
-                fill={s.color || `var(--chart-${i + 1})`}
+                key={key}
+                dataKey={key}
+                fill={getColor(key, i)}
                 radius={[4, 4, 0, 0]}
               />
             ))}

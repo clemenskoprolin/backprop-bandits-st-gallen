@@ -22,13 +22,15 @@ export interface Visualization {
 }
 
 export interface ChartData {
-  chartType: 'bar' | 'line' | 'area' | 'pie' | 'scatter'
+  chartType: 'bar' | 'line' | 'area' | 'pie' | 'radar' | 'radial' | 'boxplot'
   title: string
   description?: string
+  xAxisKey?: string
   xAxis?: string
   yAxis?: string
   data: Record<string, string | number>[]
   series: { key: string; label: string; color?: string }[]
+  chartConfig?: Record<string, { label: string; color?: string }>
 }
 
 export interface TableData {

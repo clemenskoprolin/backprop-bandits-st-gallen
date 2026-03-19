@@ -27,7 +27,6 @@ from models import (
     Session,
     SessionListResponse,
     SessionSummary,
-    VisualizationBlock,
     WidgetLayout,
 )
 
@@ -84,49 +83,6 @@ def _sse_event(event: str, data: dict) -> str:
 def get_similarity_by_query(message: str, session_id):
     return "hello"
 
-
-# Keys that represent x-axis labels rather than numeric series
-_LABEL_KEYS = {"name", "label", "category", "group", "month", "date", "material"}
-
-
-def _build_chart_vis(kwargs: dict) -> VisualizationBlock:
-    """Build a VisualizationBlock in the shape the frontend expects.
-
-    Frontend ChartData: { chartType, title, xAxis, yAxis, data: Record[], series: {key,label,color}[] }
-    """
-    series_data = kwargs.get("series_json", "[]")
-    if isinstance(series_data, str):
-        series_data = json.loads(series_data)
-    if not isinstance(series_data, list):
-        series_data = []
-
-    # Auto-generate series metadata from data keys
-    series_meta = []
-    if series_data:
-        sample = series_data[0] if isinstance(series_data[0], dict) else {}
-        idx = 0
-        for key, val in sample.items():
-            if key.lower() in _LABEL_KEYS:
-                continue
-            if isinstance(val, (int, float)):
-                idx += 1
-                series_meta.append({
-                    "key": key,
-                    "label": key.replace("_", " ").title(),
-                    "color": f"var(--chart-{idx})",
-                })
-
-    return VisualizationBlock(
-        type="chart",
-        data={
-            "chartType": kwargs.get("chart_type", "bar"),
-            "title": kwargs.get("title", ""),
-            "xAxis": kwargs.get("x_label", ""),
-            "yAxis": kwargs.get("y_label", ""),
-            "data": series_data,
-            "series": series_meta,
-        },
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,15 +143,22 @@ async def chat_stream(req: ChatRequest):
                     if tool_name == "render_visualization":
                         try:
                             kwargs = event['data'].get("input", {})
-                            series_data = kwargs.get("series_json", "[]")
-                            if isinstance(series_data, str):
-                                series_data = json.loads(series_data)
+                            data = kwargs.get("data_json", "[]")
+                            if isinstance(data, str):
+                                data = json.loads(data)
+                            chart_config = kwargs.get("chart_config_json", "{}")
+                            if isinstance(chart_config, str):
+                                chart_config = json.loads(chart_config)
                             visualization = {
-                                "chart_type": kwargs.get("chart_type", "bar"),
-                                "title": kwargs.get("title", ""),
-                                "x_label": kwargs.get("x_label", ""),
-                                "y_label": kwargs.get("y_label", ""),
-                                "series": series_data,
+                                "type": "chart",
+                                "data": {
+                                    "chartType": kwargs.get("chart_type", "bar").lower(),
+                                    "title": kwargs.get("title", ""),
+                                    "description": kwargs.get("description", ""),
+                                    "xAxisKey": kwargs.get("x_axis_key", "name"),
+                                    "data": data,
+                                    "chartConfig": chart_config,
+                                },
                             }
                             yield _sse_event("visualization", visualization)
                         except Exception as e:
@@ -274,25 +237,34 @@ async def chat(req: ChatRequest) -> ChatResponse:
     # Check if render_visualization was called to fetch the block
     for msg in reversed(messages):
         if getattr(msg, "name", None) == "render_visualization":
-            # Extract visualization kwargs from the previous AIMessage's tool_call
             for prior_msg in reversed(messages):
                 if prior_msg.type == "ai" and prior_msg.tool_calls:
                     for tc in prior_msg.tool_calls:
                         if tc['name'] == 'render_visualization':
-                            # Build the visualization block
-                            import json
                             kwargs = tc['args']
-                            series_data = kwargs.get("series_json", "[]")
-                            if isinstance(series_data, str):
+                            data = kwargs.get("data_json", "[]")
+                            if isinstance(data, str):
                                 try:
-                                    series_data = json.loads(series_data)
+                                    data = json.loads(data)
                                 except:
-                                    series_data = []
-                            visualization = {"chart_type": kwargs.get("chart_type", "bar"),
+                                    data = []
+                            chart_config = kwargs.get("chart_config_json", "{}")
+                            if isinstance(chart_config, str):
+                                try:
+                                    chart_config = json.loads(chart_config)
+                                except:
+                                    chart_config = {}
+                            visualization = {
+                                "type": "chart",
+                                "data": {
+                                    "chartType": kwargs.get("chart_type", "bar").lower(),
                                     "title": kwargs.get("title", ""),
-                                    "x_label": kwargs.get("x_label", ""),
-                                    "y_label": kwargs.get("y_label", ""),
-                                    "series": series_data,}
+                                    "description": kwargs.get("description", ""),
+                                    "xAxisKey": kwargs.get("x_axis_key", "name"),
+                                    "data": data,
+                                    "chartConfig": chart_config,
+                                },
+                            }
                             break
                     if visualization: break
             if visualization: break
