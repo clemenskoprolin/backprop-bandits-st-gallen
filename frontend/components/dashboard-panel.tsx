@@ -396,15 +396,66 @@ const toPixelX = (gx: number) => gx * (COLUMN_WIDTH + GRID_GAP)
 const toPixelY = (gy: number) => gy * (ROW_HEIGHT + GRID_GAP)
 const itemWidth = (w: number) => w * COLUMN_WIDTH + (w - 1) * GRID_GAP
 
+/**
+ * Compute responsive layout: clamp widget widths to available cols,
+ * then reflow positions so nothing overflows.
+ */
+function reflowLayout(widgets: DashboardWidget[], cols: number) {
+  // Build an occupied grid to place items top-left with wrapping
+  const occupied = new Set<string>()
+  const cellKey = (x: number, y: number) => `${x},${y}`
+
+  const placements: { id: string; x: number; y: number; w: number }[] = []
+
+  for (const widget of widgets) {
+    const w = Math.min(widget.layout.w, cols)
+    // Try the widget's stored position first
+    let placed = false
+    const sx = Math.min(widget.layout.x, cols - w)
+    const sy = widget.layout.y
+    let fits = true
+    for (let dx = 0; dx < w; dx++) {
+      if (occupied.has(cellKey(sx + dx, sy))) { fits = false; break }
+    }
+    if (fits) {
+      for (let dx = 0; dx < w; dx++) occupied.add(cellKey(sx + dx, sy))
+      placements.push({ id: widget.id, x: sx, y: sy, w })
+      placed = true
+    }
+
+    if (!placed) {
+      // Find the first row/col where it fits
+      for (let y = 0; ; y++) {
+        for (let x = 0; x <= cols - w; x++) {
+          let ok = true
+          for (let dx = 0; dx < w; dx++) {
+            if (occupied.has(cellKey(x + dx, y))) { ok = false; break }
+          }
+          if (ok) {
+            for (let dx = 0; dx < w; dx++) occupied.add(cellKey(x + dx, y))
+            placements.push({ id: widget.id, x, y, w })
+            placed = true
+            break
+          }
+        }
+        if (placed) break
+      }
+    }
+  }
+
+  return placements
+}
+
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
   const { dashboardWidgets, removeWidget, updateWidgetLayouts, setShowDashboard } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Keep a ref to latest widgets so pointer handlers always read fresh data
+  // Keep refs to latest values so pointer handlers always read fresh data
   const widgetsRef = useRef(dashboardWidgets)
   widgetsRef.current = dashboardWidgets
+  const colsRef = useRef(1)
 
   // ── Drag state ──
   const dragRef = useRef<{
@@ -439,20 +490,31 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   const cols = useMemo(() => Math.max(1, Math.floor((containerWidth + GRID_GAP) / (COLUMN_WIDTH + GRID_GAP))), [containerWidth])
   const gridWidth = cols * COLUMN_WIDTH + (cols - 1) * GRID_GAP
 
+  colsRef.current = cols
+
+  // Compute responsive positions: clamp widths + reflow
+  const layoutMap = useMemo(() => {
+    const placements = reflowLayout(dashboardWidgets, cols)
+    return new Map(placements.map((p) => [p.id, p]))
+  }, [dashboardWidgets, cols])
+
   // ── Drag handle ──
   const handleDragHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
     e.preventDefault()
     const widget = widgetsRef.current.find((w) => w.id === widgetId)
     if (!widget) return
+    const placement = layoutMap.get(widgetId)
+    const px = toPixelX(placement?.x ?? widget.layout.x)
+    const py = toPixelY(placement?.y ?? widget.layout.y)
     dragRef.current = {
       widgetId,
       startPointerX: e.clientX,
       startPointerY: e.clientY,
-      startPx: toPixelX(widget.layout.x),
-      startPy: toPixelY(widget.layout.y),
+      startPx: px,
+      startPy: py,
     }
-    setDragVisual({ widgetId, px: toPixelX(widget.layout.x), py: toPixelY(widget.layout.y) })
-  }, [])
+    setDragVisual({ widgetId, px, py })
+  }, [layoutMap])
 
   // ── Resize handle ──
   const handleResizeHandleDown = useCallback((widgetId: string, e: React.PointerEvent) => {
@@ -460,12 +522,13 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     e.stopPropagation()
     const widget = widgetsRef.current.find((w) => w.id === widgetId)
     if (!widget) return
+    const w = Math.min(widget.layout.w, colsRef.current)
     resizeRef.current = {
       widgetId,
       startPointerX: e.clientX,
-      startW: itemWidth(widget.layout.w),
+      startW: itemWidth(w),
     }
-    setResizeVisualWidth({ widgetId, width: itemWidth(widget.layout.w) })
+    setResizeVisualWidth({ widgetId, width: itemWidth(w) })
   }, [])
 
   // ── Global pointer move / up ──
@@ -482,22 +545,22 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         const dragged = widgets.find((w) => w.id === drag.widgetId)
         if (!dragged) return
 
-        const dw = itemWidth(dragged.layout.w)
+        const c = colsRef.current
+        const dw = itemWidth(Math.min(dragged.layout.w, c))
         const centerX = newPx + dw / 2
         const centerY = newPy + ROW_HEIGHT / 2
 
         for (const other of widgets) {
           if (other.id === drag.widgetId) continue
-          const ox = toPixelX(other.layout.x)
+          const ow = Math.min(other.layout.w, c)
+          const ox = toPixelX(Math.min(other.layout.x, c - ow))
           const oy = toPixelY(other.layout.y)
-          const ow = itemWidth(other.layout.w)
-          if (centerX >= ox && centerX < ox + ow && centerY >= oy && centerY < oy + ROW_HEIGHT) {
-            // Swap positions
+          const owPx = itemWidth(ow)
+          if (centerX >= ox && centerX < ox + owPx && centerY >= oy && centerY < oy + ROW_HEIGHT) {
             updateWidgetLayouts([
               { id: drag.widgetId, layout: { ...dragged.layout, x: other.layout.x, y: other.layout.y } },
               { id: other.id, layout: { ...other.layout, x: dragged.layout.x, y: dragged.layout.y } },
             ])
-            // Reset drag origin to the new grid slot
             drag.startPx = toPixelX(other.layout.x)
             drag.startPy = toPixelY(other.layout.y)
             drag.startPointerX = e.clientX
@@ -522,11 +585,13 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         const widgets = widgetsRef.current
         const dragged = widgets.find((w) => w.id === drag.widgetId)
         if (dragged) {
+          const c = colsRef.current
           const finalPx = drag.startPx + (e.clientX - drag.startPointerX)
           const finalPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
-          const targetX = Math.max(0, Math.min(cols - dragged.layout.w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
+          const w = Math.min(dragged.layout.w, c)
+          const targetX = Math.max(0, Math.min(c - w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
           const targetY = Math.max(0, Math.round(finalPy / (ROW_HEIGHT + GRID_GAP)))
-          const occupied = widgets.some((w) => w.id !== drag.widgetId && w.layout.x === targetX && w.layout.y === targetY)
+          const occupied = widgets.some((o) => o.id !== drag.widgetId && o.layout.x === targetX && o.layout.y === targetY)
           if (!occupied) {
             updateWidgetLayouts([{ id: drag.widgetId, layout: { ...dragged.layout, x: targetX, y: targetY } }])
           }
@@ -538,8 +603,9 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       // ── Finish resize — snap to 1 or 2 columns ──
       if (resizeRef.current) {
         const resize = resizeRef.current
+        const c = colsRef.current
         const finalWidth = resize.startW + (e.clientX - resize.startPointerX)
-        const snappedW = finalWidth > COLUMN_WIDTH * 1.5 ? Math.min(2, cols) : 1
+        const snappedW = finalWidth > COLUMN_WIDTH * 1.5 ? Math.min(2, c) : 1
         const widget = widgetsRef.current.find((w) => w.id === resize.widgetId)
         if (widget) {
           updateWidgetLayouts([{ id: resize.widgetId, layout: { ...widget.layout, w: snappedW } }])
@@ -555,7 +621,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [cols, updateWidgetLayouts])
+  }, [updateWidgetLayouts])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
     const data = widget.visualization.data
@@ -570,17 +636,21 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     URL.revokeObjectURL(url)
   }, [])
 
-  // Grid container height based on widget positions
+  // Grid container height based on reflowed positions
   const gridHeight = useMemo(() => {
-    if (dashboardWidgets.length === 0) return 0
-    const maxBottom = dashboardWidgets.reduce((max, w) => Math.max(max, (w.layout.y + w.layout.h) * (ROW_HEIGHT + GRID_GAP)), 0)
+    if (layoutMap.size === 0) return 0
+    let maxBottom = 0
+    layoutMap.forEach((p) => {
+      const bottom = (p.y + 1) * (ROW_HEIGHT + GRID_GAP)
+      if (bottom > maxBottom) maxBottom = bottom
+    })
     return maxBottom - GRID_GAP
-  }, [dashboardWidgets])
+  }, [layoutMap])
 
   const isDragging = dragVisual !== null
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div ref={containerRef} className="flex h-full flex-col bg-background">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
         <div className="flex items-center gap-2">
@@ -623,7 +693,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
 
       {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
-        <div ref={containerRef} className={cn('p-4', isDragging && 'cursor-grabbing')}>
+        <div className={cn('p-4', isDragging && 'cursor-grabbing')}>
           {dashboardWidgets.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="rounded-full bg-muted p-4 mb-4">
@@ -639,10 +709,12 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
               {dashboardWidgets.map((widget) => {
                 const isBeingDragged = dragVisual?.widgetId === widget.id
                 const isBeingResized = resizeVisualWidth?.widgetId === widget.id
+                const placement = layoutMap.get(widget.id)
 
-                const px = isBeingDragged ? dragVisual.px : toPixelX(widget.layout.x)
-                const py = isBeingDragged ? dragVisual.py : toPixelY(widget.layout.y)
-                const w = isBeingResized ? resizeVisualWidth.width : itemWidth(widget.layout.w)
+                const px = isBeingDragged ? dragVisual.px : toPixelX(placement?.x ?? widget.layout.x)
+                const py = isBeingDragged ? dragVisual.py : toPixelY(placement?.y ?? widget.layout.y)
+                const displayW = placement?.w ?? Math.min(widget.layout.w, cols)
+                const w = isBeingResized ? resizeVisualWidth.width : itemWidth(displayW)
 
                 return (
                   <div
