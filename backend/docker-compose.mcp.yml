@@ -1,0 +1,23 @@
+version: "3.8"
+
+# MongoDB MCP Server - provides MongoDB tools to the AI agent via MCP protocol
+# Start: docker-compose -f docker-compose.mcp.yml up -d
+# Stop:  docker-compose -f docker-compose.mcp.yml down
+# Logs:  docker logs -f mongodb-mcp-server
+
+services:
+  mongodb-mcp:
+    image: mongodb/mongodb-mcp-server:latest
+    container_name: mongodb-mcp-server
+    ports:
+      - "3000:3000"
+    environment:
+      # MongoDB connection string - change this to your MongoDB instance
+      - MDB_MCP_CONNECTION_STRING=mongodb://localhost:27017/txp_clean
+    command: ["--transport", "http", "--httpHost", "0.0.0.0", "--httpPort", "3000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/mcp"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

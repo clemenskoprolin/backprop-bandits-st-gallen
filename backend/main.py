@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Ensure `backend/` is on sys.path so `routers.*` imports work when uvicorn
 # is invoked as `uvicorn backend.main:app` from the project root.
@@ -9,8 +10,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import chat, feedback, templates
+from src.agent import init_mcp_client, shutdown_mcp_client
 
-app = FastAPI(title="Backprop Bandits — Material Testing AI")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize MCP client on startup, shutdown on exit."""
+    try:
+        await init_mcp_client()
+        print("MongoDB MCP client initialized")
+    except Exception as e:
+        print(f"Failed to initialize MCP client: {e}")
+        print("Continuing without MCP tools...")
+
+    yield
+
+    await shutdown_mcp_client()
+    print("MongoDB MCP client shutdown")
+
+
+app = FastAPI(title="Backprop Bandits — Material Testing AI", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
