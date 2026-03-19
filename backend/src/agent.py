@@ -182,8 +182,8 @@ def output_node(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
-    # Claude requires conversation to end with a user message
-    # messages = messages + [HumanMessage(content="Please provide your final response based on the analysis above.")]
+    # Claude requires conversation to end with a user message after tool results
+    messages = messages + [HumanMessage(content="Now provide your response to the user.")]
     response = llm.invoke(messages)
     return {"messages": [response]}
 
