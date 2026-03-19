@@ -18,8 +18,8 @@ export interface Message {
 }
 
 export interface Visualization {
-  type: 'chart' | 'table' | 'cards' | 'none'
-  data: ChartData | TableData | CardsData | null
+  type: 'chart' | 'table' | 'cards' | 'text' | 'empty-diagram' | 'none'
+  data: ChartData | TableData | CardsData | TextData | EmptyDiagramData | null
 }
 
 export interface ChartData {
@@ -48,6 +48,15 @@ export interface CardsData {
     description?: string
     trend?: { direction: 'up' | 'down' | 'neutral'; value: string }
   }[]
+}
+
+export interface TextData {
+  title: string
+  content?: string
+}
+
+export interface EmptyDiagramData {
+  promptHint?: string
 }
 
 export interface Template {

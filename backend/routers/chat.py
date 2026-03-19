@@ -12,6 +12,7 @@ Routes:
 from __future__ import annotations
 
 import json
+import requests
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -122,7 +123,20 @@ def _parse_visualization_from_tool_input(
 
 
 def get_similarity_by_query(message: str, session_id):
-    return "hello"
+    try:
+        print("Querying")
+        print(message, session_id)
+        response = requests.post("http://localhost:5000/generate_context", json={
+            "query": message,
+            "session_id": session_id
+        })
+        print(response.status_code)
+        print(response.text)
+        print(response.json()["context"])
+        return response.json()["context"][:100]
+    except Exception as e:
+        print("Exception with rag:", e)
+        return ""
 
 
 

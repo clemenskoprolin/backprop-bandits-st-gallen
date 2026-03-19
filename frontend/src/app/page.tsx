@@ -44,18 +44,8 @@ export default function Home() {
     }
   }, [currentSession?.session_id, dashboardWidgets.length])
 
-  // Auto-collapse sidebar only when a NEW widget is added during this session
+  // Track widget count changes (no auto-collapse since dashboard is always visible)
   useEffect(() => {
-    // Skip if we haven't initialized the count yet
-    if (prevWidgetCount.current === null) {
-      prevWidgetCount.current = dashboardWidgets.length
-      return
-    }
-    
-    // Only collapse if widgets increased (new widget added)
-    if (dashboardWidgets.length > prevWidgetCount.current && prevWidgetCount.current === 0) {
-      setSidebarOpen(false)
-    }
     prevWidgetCount.current = dashboardWidgets.length
   }, [dashboardWidgets.length])
 

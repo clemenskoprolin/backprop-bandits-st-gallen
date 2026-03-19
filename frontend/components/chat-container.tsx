@@ -56,13 +56,13 @@ export function ChatContainer() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const [splitFraction, setSplitFraction] = useState(0.5)
-  const [rawFraction, setRawFraction] = useState(0.5)
+  const [splitFraction, setSplitFraction] = useState(2 / 3)
+  const [rawFraction, setRawFraction] = useState(2 / 3)
   const [dragMode, setDragMode] = useState<DragMode>(null)
 
   const hasMessages = messages.length > 0
   const hasWidgets = dashboardWidgets.length > 0
-  const bothVisible = showChat && showDashboard && hasWidgets
+  const bothVisible = showChat && showDashboard
   const isDragging = dragMode !== null
 
   const dragIntent = useMemo(() => {
@@ -93,7 +93,7 @@ export function ChatContainer() {
 
   // Global handlers attached/detached via useEffect
   const dragModeRef = useRef<DragMode>(null)
-  const rawFractionRef = useRef(0.5)
+  const rawFractionRef = useRef(2 / 3)
   const dragMovedRef = useRef(false)
 
   const onPointerMove = useCallback((e: PointerEvent) => {
@@ -207,12 +207,10 @@ export function ChatContainer() {
           <MessageSquareIcon className="h-4 w-4" />
           Show Chat
         </Button>
-        {hasWidgets && (
-          <Button variant="outline" onClick={() => setShowDashboard(true)} className="gap-2">
-            <LayoutDashboardIcon className="h-4 w-4" />
-            Show Dashboard
-          </Button>
-        )}
+        <Button variant="outline" onClick={() => setShowDashboard(true)} className="gap-2">
+          <LayoutDashboardIcon className="h-4 w-4" />
+          Show Dashboard
+        </Button>
       </div>
     )
   }
@@ -252,7 +250,7 @@ export function ChatContainer() {
       )}
 
       {/* ── Edge handle: restore chat (left side) — click or drag ── */}
-      {!showChat && hasWidgets && showDashboard && !isDragging && (
+      {!showChat && showDashboard && !isDragging && (
         <div
           className="w-8 shrink-0 cursor-pointer bg-muted/50 hover:bg-muted transition-colors z-20 flex flex-col items-center justify-center gap-1 border-r border-border"
           onPointerDown={(e) => startDrag('restore-chat', e)}
@@ -281,25 +279,23 @@ export function ChatContainer() {
               )}
             </div>
             <div className="flex items-center gap-1">
-              {hasWidgets && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setShowDashboard(!showDashboard)}
-                    >
-                      {showDashboard ? (
-                        <PanelRightCloseIcon className="h-4 w-4" />
-                      ) : (
-                        <LayoutDashboardIcon className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{showDashboard ? 'Hide Dashboard' : 'Show Dashboard'}</TooltipContent>
-                </Tooltip>
-              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setShowDashboard(!showDashboard)}
+                  >
+                    {showDashboard ? (
+                      <PanelRightCloseIcon className="h-4 w-4" />
+                    ) : (
+                      <LayoutDashboardIcon className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{showDashboard ? 'Hide Dashboard' : 'Show Dashboard'}</TooltipContent>
+              </Tooltip>
             </div>
           </header>
 
@@ -366,7 +362,7 @@ export function ChatContainer() {
       )}
 
       {/* ── Dashboard Panel ── */}
-      {(showDashboard && hasWidgets || dragMode === 'restore-dashboard') && (
+      {(showDashboard || dragMode === 'restore-dashboard') && (
         <div className={cn('flex-1 min-w-0 h-full overflow-hidden')}>
           <DashboardPanel
             showChat={showChat}
@@ -376,7 +372,7 @@ export function ChatContainer() {
       )}
 
       {/* ── Edge handle: restore dashboard (right side) — click or drag ── */}
-      {!showDashboard && hasWidgets && showChat && !isDragging && (
+      {!showDashboard && showChat && !isDragging && (
         <div
           className="w-8 shrink-0 cursor-pointer bg-muted/50 hover:bg-muted transition-colors z-20 flex flex-col items-center justify-center gap-1 border-l border-border"
           onPointerDown={(e) => startDrag('restore-dashboard', e)}
@@ -387,7 +383,7 @@ export function ChatContainer() {
       )}
 
       {/* Mobile FAB when chat is hidden */}
-      {!showChat && hasWidgets && (
+      {!showChat && (
         <Button
           variant="default"
           size="icon"

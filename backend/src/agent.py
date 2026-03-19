@@ -14,6 +14,70 @@ from src import db
 
 load_dotenv()
 
+DB_CONTEXT = """
+## Database Overview
+
+### Collections
+- `tests` — primary collection containing all material test records
+
+### `tests` Schema
+Top-level fields:
+- `_id`: ObjectId
+- `state`: string — test outcome, e.g. `"finishedOK"`, `"finishedError"`
+- `timestamp`: datetime — when the test was recorded
+- `TestParametersFlat`: object — flattened key/value test parameters
+  - Field names are CASE-SENSITIVE and often SCREAMING_SNAKE_CASE
+  - Examples: `SPECIMEN_TYPE`, `CUSTOMER`, `Upper force limit`
+- `valuecolumns`: array — stores test results and measurements
+  - `_id`: string — UUID, sometimes ends with `_key` (ignore these)
+  - `valuetableId`: UUID — references the type of value stored
+  - `refId`: ObjectId — reference back to the source test `_id`
+
+### UUID References
+- For **Results** (single value per valuecolumn): refer to `TestResultTypes`
+- For **Measurements** (time-series/channel data): refer to `channelParameterMap`
+- `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
+
+### Query Tips
+- Always use `get_sample_documents` first to verify exact field names before querying
+- Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
+- Fields with spaces in their names are valid in MongoDB: e.g. `TestParametersFlat.Upper force limit`
+- An empty result from `find` may mean a wrong field name, not missing data
+- `valuecolumn._id` entries ending with `_key` were not migrated — ignore them
+"""
+
+DB_CONTEXT = """
+## Database Overview
+
+### Collections
+- `tests` — primary collection containing all material test records
+
+### `tests` Schema
+Top-level fields:
+- `_id`: ObjectId
+- `state`: string — test outcome, e.g. `"finishedOK"`, `"finishedError"`
+- `timestamp`: datetime — when the test was recorded
+- `TestParametersFlat`: object — flattened key/value test parameters
+  - Field names are CASE-SENSITIVE and often SCREAMING_SNAKE_CASE
+  - Examples: `SPECIMEN_TYPE`, `CUSTOMER`, `Upper force limit`
+- `valuecolumns`: array — stores test results and measurements
+  - `_id`: string — UUID, sometimes ends with `_key` (ignore these)
+  - `valuetableId`: UUID — references the type of value stored
+  - `refId`: ObjectId — reference back to the source test `_id`
+
+### UUID References
+- For **Results** (single value per valuecolumn): refer to `TestResultTypes`
+- For **Measurements** (time-series/channel data): refer to `channelParameterMap`
+- `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
+
+### Query Tips
+- Always use `get_sample_documents` first to verify exact field names before querying
+- Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
+- Fields with spaces in their names are valid in MongoDB: e.g. `TestParametersFlat.Upper force limit`
+- An empty result from `find` may mean a wrong field name, not missing data
+- `valuecolumn._id` entries ending with `_key` were not migrated — ignore them
+"""
+
 # ---------------------------------------------------------------------------
 # Module-level constants and shared stateless resources
 # ---------------------------------------------------------------------------
@@ -141,8 +205,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         # ---- System prompts (instance-scoped) ----
 
-        self._system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
+        self._system_prompt = f"""You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
         AVAILABLE TOOLS:
+
+        {DB_CONTEXT}
 
         MongoDB (from MCP server):
         - `find` - Query documents with filters, projection, and sorting

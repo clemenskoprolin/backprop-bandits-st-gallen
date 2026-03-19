@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, Message, Template, Visualization, ChartData, TableData, CardsData, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
+import { Session, Message, Template, Visualization, ChartData, TableData, CardsData, TextData, DashboardWidget, WidgetSize, WIDGET_SIZE_CONFIG } from './types'
 import {
   fetchSessions,
   fetchSession,
@@ -43,6 +43,7 @@ interface ChatStore {
   // Dashboard widget actions
   addWidget: (widget: DashboardWidget) => void
   removeWidget: (widgetId: string) => void
+  updateWidget: (widgetId: string, update: Partial<DashboardWidget>) => void
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) => void
   reorderWidgets: (widgetIds: string[]) => void
   clearNewWidgetFlags: () => void
@@ -130,6 +131,8 @@ function getWidgetTitle(widget: DashboardWidget): string {
   if (visualization.type === 'chart') return (visualization.data as ChartData)?.title ?? ''
   if (visualization.type === 'table') return (visualization.data as TableData)?.title ?? ''
   if (visualization.type === 'cards') return (visualization.data as CardsData)?.title ?? ''
+  if (visualization.type === 'text') return (visualization.data as TextData)?.title ?? 'Note'
+  if (visualization.type === 'empty-diagram') return 'New Chart'
   return ''
 }
 
@@ -480,6 +483,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   removeWidget: (widgetId: string) =>
     set((state) => ({
       dashboardWidgets: state.dashboardWidgets.filter((w) => w.id !== widgetId),
+    })),
+
+  updateWidget: (widgetId: string, update: Partial<DashboardWidget>) =>
+    set((state) => ({
+      dashboardWidgets: state.dashboardWidgets.map((w) =>
+        w.id === widgetId ? { ...w, ...update } : w
+      ),
     })),
 
   updateWidgetLayouts: (layouts: { id: string; layout: DashboardWidget['layout'] }[]) =>
