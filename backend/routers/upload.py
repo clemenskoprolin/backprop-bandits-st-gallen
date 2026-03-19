@@ -13,7 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
-RAG_URL = os.getenv("RAG_URL", "http://localhost:5000")
+RAG_URL = os.getenv("RAG_URL", "http://localhost:8000")
 
 
 @router.post("/upload")
@@ -29,6 +29,8 @@ async def upload_pdf(
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
+        print("Saved temporary:", tmp.name, tmp_path)
+
 
     try:
         response = requests.post(

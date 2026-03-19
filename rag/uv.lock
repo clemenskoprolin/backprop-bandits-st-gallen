@@ -1926,6 +1926,7 @@ dependencies = [
     { name = "langchain-huggingface" },
     { name = "pydantic" },
     { name = "pypdf" },
+    { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "sentence-transformers" },
     { name = "uvicorn" },
@@ -1939,8 +1940,9 @@ requires-dist = [
     { name = "langchain-huggingface", specifier = ">=1.2.1" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pypdf", specifier = ">=6.9.1" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.22" },
-    { name = "sentence-transformers", specifier = ">=5.3.0" },
+    { name = "sentence-transformers", specifier = ">=2.2.0" },
     { name = "uvicorn", specifier = ">=0.42.0" },
 ]
 
