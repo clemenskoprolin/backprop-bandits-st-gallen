@@ -16,6 +16,8 @@ import {
   TypeIcon,
   PlusIcon,
   FileTextIcon,
+  SendHorizontalIcon,
+  PencilIcon,
 } from 'lucide-react'
 import {
   Bar,
@@ -70,7 +72,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 
 interface DashboardPanelProps {
@@ -542,51 +543,33 @@ function CardsVisualization({ data }: { data: CardsData }) {
   )
 }
 
-function TextVisualization({
-  data,
-  onUpdate,
+function EmptyDiagramVisualization({
+  onClick,
 }: {
-  data: TextData
-  onUpdate: (updated: TextData) => void
+  onClick: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(data.content ?? '')
-
-  const commit = () => {
-    setEditing(false)
-    onUpdate({ ...data, content: draft })
-  }
-
   return (
-    <div className="h-full flex flex-col">
-      {editing ? (
-        <Textarea
-          className="flex-1 resize-none bg-transparent border-0 text-sm text-foreground focus-visible:ring-0 p-0 shadow-none"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === 'Escape') commit() }}
-          autoFocus
-          placeholder="Add notes here…"
-        />
-      ) : (
-        <p
-          className={cn(
-            'text-sm flex-1 cursor-text leading-relaxed',
-            draft ? 'text-foreground' : 'text-muted-foreground italic'
-          )}
-          onClick={() => setEditing(true)}
-        >
-          {draft || 'Click to add notes…'}
-        </p>
-      )}
-    </div>
+    <button
+      className="h-full w-full flex flex-col items-center justify-center gap-3 px-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-md"
+      onClick={onClick}
+    >
+      <div className="rounded-full bg-muted p-3">
+        <BarChart2Icon className="h-6 w-6 text-muted-foreground" />
+      </div>
+      <p className="text-xs text-muted-foreground text-center leading-snug">
+        Describe the chart or table you want
+      </p>
+    </button>
   )
 }
 
-function EmptyDiagramVisualization({
+function EmptyDiagramDialog({
+  open,
+  onOpenChange,
   onGenerate,
 }: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onGenerate: (prompt: string) => void
 }) {
   const [prompt, setPrompt] = useState('')
@@ -596,30 +579,40 @@ function EmptyDiagramVisualization({
     if (!trimmed) return
     onGenerate(trimmed)
     setPrompt('')
+    onOpenChange(false)
   }
 
+  // Reset prompt when dialog closes
+  useEffect(() => {
+    if (!open) setPrompt('')
+  }, [open])
+
   return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 px-4">
-      <div className="rounded-full bg-muted p-3">
-        <BarChart2Icon className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <p className="text-xs text-muted-foreground text-center leading-snug">
-        Describe the chart or table you want
-      </p>
-      <div className="w-full flex gap-2">
-        <Input
-          className="h-8 text-xs"
-          placeholder="e.g. Tensile strength over time…"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
-          autoFocus
-        />
-        <Button size="sm" className="h-8 px-2 shrink-0" onClick={submit} disabled={!prompt.trim()}>
-          <SendHorizontalIcon className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Configure Chart</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 pt-2">
+          <p className="text-sm text-muted-foreground">
+            Describe the chart or table you want to generate.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              className="flex-1"
+              placeholder="e.g. Tensile strength over time…"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+              autoFocus
+            />
+            <Button onClick={submit} disabled={!prompt.trim()} className="shrink-0">
+              <SendHorizontalIcon className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -631,7 +624,7 @@ function DashboardWidgetCard({
   onDownload,
   onDragHandleDown,
   onUpdateVisualizationData,
-  onGenerateDiagram,
+  onOpenEmptyDiagramDialog,
 }: {
   widget: DashboardWidget
   isNew?: boolean
@@ -640,17 +633,21 @@ function DashboardWidgetCard({
   onDownload: () => void
   onDragHandleDown?: (e: React.PointerEvent) => void
   onUpdateVisualizationData?: (data: Visualization['data']) => void
-  onGenerateDiagram?: (prompt: string) => void
+  onOpenEmptyDiagramDialog?: () => void
 }) {
   const isText = widget.visualization.type === 'text'
   const isEmptyDiagram = widget.visualization.type === 'empty-diagram'
   const isManual = isText || isEmptyDiagram
 
-  // Editable title state for text cards
+  // Editable headline state for text widgets
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(
     isText ? (widget.visualization.data as TextData)?.title ?? '' : ''
   )
+  // Sync draft if external data changes
+  useEffect(() => {
+    if (isText) setTitleDraft((widget.visualization.data as TextData)?.title ?? '')
+  }, [(widget.visualization.data as TextData)?.title]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commitTitle = () => {
     setEditingTitle(false)
@@ -669,16 +666,12 @@ function DashboardWidgetCard({
       case 'cards':
         return <CardsVisualization data={visualization.data as CardsData} />
       case 'text':
-        return (
-          <TextVisualization
-            data={visualization.data as TextData}
-            onUpdate={(d) => onUpdateVisualizationData?.(d)}
-          />
-        )
+        // Text widget is headline-only — body is intentionally empty
+        return null
       case 'empty-diagram':
         return (
           <EmptyDiagramVisualization
-            onGenerate={(prompt) => onGenerateDiagram?.(prompt)}
+            onClick={() => onOpenEmptyDiagramDialog?.()}
           />
         )
       default:
@@ -691,36 +684,48 @@ function DashboardWidgetCard({
     if (visualization.type === 'chart') return (visualization.data as ChartData).title
     if (visualization.type === 'table') return (visualization.data as TableData).title
     if (visualization.type === 'cards') return (visualization.data as CardsData).title
-    if (visualization.type === 'text') return (visualization.data as TextData)?.title || 'Note'
+    if (visualization.type === 'text') return (widget.visualization.data as TextData)?.title || 'Headline'
     if (visualization.type === 'empty-diagram') return 'New Chart'
     return 'Visualization'
   }
 
   return (
-    <Card className={`h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none ${isNew ? 'ring-2 ring-primary/60 animate-pulse' : ''}`}>
-      <CardHeader className={cn('shrink-0 border-b border-border/30', isManual ? 'py-1 px-2' : 'py-1.5 px-3')}>
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-0.5 rounded hover:bg-muted transition-colors" onPointerDown={onDragHandleDown}>
+    <Card className={`h-full flex flex-col border-border/50 hover:border-border transition-colors overflow-hidden select-none group ${isNew ? 'ring-2 ring-primary/60 animate-pulse' : ''}`}>
+      <CardHeader className={cn('shrink-0 border-b border-border/30', isText ? 'py-2 px-2 flex-1' : isManual ? 'py-1 px-2' : 'py-1.5 px-3')}>
+        <div className={cn('flex items-center gap-1.5 overflow-hidden', isText && 'h-full')}>
+          <div className="drag-handle cursor-grab active:cursor-grabbing p-1 -ml-0.5 rounded hover:bg-muted transition-colors shrink-0" onPointerDown={onDragHandleDown}>
             <GripVerticalIcon className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
 
-          {/* Editable title for text cards */}
-          {isText && editingTitle ? (
-            <input
-              className="flex-1 min-w-0 text-sm font-medium bg-transparent border-0 outline-none focus:ring-0 p-0"
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commitTitle}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') commitTitle() }}
-              autoFocus
-            />
+          {/* Headline text widget — large editable title, no body */}
+          {isText ? (
+            editingTitle ? (
+              <input
+                className="flex-1 min-w-0 bg-transparent border-0 outline-none focus:ring-0 p-0 font-bold leading-tight"
+                style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') commitTitle() }}
+                autoFocus
+              />
+            ) : (
+              <div
+                className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer"
+                onClick={() => { setTitleDraft(getTitle()); setEditingTitle(true) }}
+              >
+                <span
+                  className="font-bold leading-tight truncate text-foreground"
+                  style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.75rem)' }}
+                >
+                  {getTitle()}
+                </span>
+                <PencilIcon className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            )
           ) : (
-            <CardTitle
-              className={cn('text-sm font-medium truncate flex-1 min-w-0', isText && 'cursor-pointer hover:text-muted-foreground transition-colors')}
-              onClick={isText ? () => { setTitleDraft(getTitle()); setEditingTitle(true) } : undefined}
-            >
+            <CardTitle className="text-sm font-medium truncate flex-1 min-w-0">
               {getTitle()}
-              {isText && <PencilIcon className="inline ml-1 h-3 w-3 text-muted-foreground/50 opacity-0 group-hover:opacity-100" />}
             </CardTitle>
           )}
 
@@ -761,9 +766,11 @@ function DashboardWidgetCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className={cn('flex-1 min-h-0 overflow-hidden', isManual ? 'p-2' : 'p-2')}>
-        {renderVisualization()}
-      </CardContent>
+      {!isText && (
+        <CardContent className="flex-1 min-h-0 overflow-hidden p-2">
+          {renderVisualization()}
+        </CardContent>
+      )}
     </Card>
   )
 }
@@ -840,11 +847,17 @@ function FullscreenWidget({
 const COLUMN_WIDTH = 340
 const GRID_GAP = 16
 const ROW_HEIGHT = 240
+const HEADLINE_ROW_HEIGHT = 80 // Compact height for headline (text) widgets
 
 const toPixelX = (gx: number) => gx * (COLUMN_WIDTH + GRID_GAP)
 const toPixelY = (gy: number) => gy * (ROW_HEIGHT + GRID_GAP)
 const toPixelH = (gh: number) => gh * ROW_HEIGHT + (gh - 1) * GRID_GAP
 const itemWidth = (w: number) => w * COLUMN_WIDTH + (w - 1) * GRID_GAP
+
+function getWidgetPixelHeight(widget: DashboardWidget, displayH: number): number {
+  if (widget.visualization.type === 'text') return HEADLINE_ROW_HEIGHT
+  return toPixelH(displayH)
+}
 
 /**
  * Compute responsive layout: clamp widget widths to available cols,
@@ -900,13 +913,14 @@ function reflowLayout(widgets: DashboardWidget[], cols: number) {
   return placements
 }
 
-type FabDragType = 'text' | 'text-tall' | 'empty-diagram'
+type FabDragType = 'text' | 'empty-diagram'
 
 export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) {
   const { dashboardWidgets, addWidget, removeWidget, updateWidget, updateWidgetLayouts, sendUserMessage } = useChatStore()
   const [containerWidth, setContainerWidth] = useState(800)
   const [fullscreenWidget, setFullscreenWidget] = useState<DashboardWidget | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [emptyDiagramDialogId, setEmptyDiagramDialogId] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const gridAreaRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -976,6 +990,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     type: FabDragType
     startX: number
     startY: number
+    active: boolean // true once drag threshold exceeded
   } | null>(null)
   const [fabOpen, setFabOpen] = useState(false)
   const [fabDragVisual, setFabDragVisual] = useState<{ type: FabDragType; x: number; y: number } | null>(null)
@@ -1093,9 +1108,19 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         setResizeVisual({ widgetId: resize.widgetId, width: newWidth })
       }
 
-      // ── FAB drag ghost ──
+      // ── FAB drag ghost (activate after 8px threshold) ──
       if (fabDragRef.current) {
-        setFabDragVisual({ type: fabDragRef.current.type, x: e.clientX, y: e.clientY })
+        const fab = fabDragRef.current
+        if (!fab.active) {
+          const dx = e.clientX - fab.startX
+          const dy = e.clientY - fab.startY
+          if (Math.hypot(dx, dy) > 8) {
+            fab.active = true
+          }
+        }
+        if (fab.active) {
+          setFabDragVisual({ type: fab.type, x: e.clientX, y: e.clientY })
+        }
       }
     }
 
@@ -1135,28 +1160,45 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         setResizeVisual(null)
       }
 
-      // ── Finish FAB drag — place widget on grid or cancel ──
+      // ── Finish FAB drag — place widget on grid or treat as click ──
       if (fabDragRef.current) {
-        const { type } = fabDragRef.current
+        const { type, active } = fabDragRef.current
         fabDragRef.current = null
         setFabDragVisual(null)
 
-        // Check if dropped over the grid area
+        if (!active) {
+          // Short press = click: place at bottom and show dialog for empty-diagram
+          let maxY = 0
+          widgetsRef.current.forEach((w) => {
+            const b = w.layout.y + (w.layout.h ?? 1)
+            if (b > maxY) maxY = b
+          })
+          const iw = type === 'empty-diagram' ? 2 : 1
+          const newWidget = buildManualWidget(type, 0, maxY, iw, 1)
+          addWidgetRef.current(newWidget)
+          if (type === 'empty-diagram') {
+            setEmptyDiagramDialogId(newWidget.id)
+          }
+          setFabOpen(false)
+          return
+        }
+
+        // Drag drop: check if dropped over the grid area
         const gridEl = gridAreaRef.current
         if (gridEl) {
           const rect = gridEl.getBoundingClientRect()
-          const scrollTop = gridEl.closest('[data-slot="scroll-area-viewport"]')?.scrollTop ?? 0
+          const scrollViewport = gridEl.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null
+          const scrollTop = scrollViewport?.scrollTop ?? 0
           const relX = e.clientX - rect.left - 16 // p-4 padding
           const relY = e.clientY - rect.top + scrollTop - 16
 
           const c = colsRef.current
           const iw = type === 'empty-diagram' ? 2 : 1
-          const ih = type === 'text-tall' ? 2 : 1
 
           let gx = Math.max(0, Math.min(c - iw, Math.round(relX / (COLUMN_WIDTH + GRID_GAP))))
           let gy = Math.max(0, Math.round(relY / (ROW_HEIGHT + GRID_GAP)))
 
-          const droppedOnGrid = relX >= 0 && relY >= 0 && e.clientX < rect.right && e.clientY < rect.bottom
+          const droppedOnGrid = relX >= -COLUMN_WIDTH && relY >= -ROW_HEIGHT && e.clientX < rect.right + 20 && e.clientY < rect.bottom + 20
 
           if (!droppedOnGrid) {
             // Place at bottom of grid
@@ -1169,8 +1211,11 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             gy = maxY
           }
 
-          const newWidget = buildManualWidget(type, gx, gy, iw, ih)
+          const newWidget = buildManualWidget(type, gx, gy, iw, 1)
           addWidgetRef.current(newWidget)
+          if (type === 'empty-diagram') {
+            setEmptyDiagramDialogId(newWidget.id)
+          }
         }
       }
     }
@@ -1194,8 +1239,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     const id = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     let visualization: Visualization
 
-    if (type === 'text' || type === 'text-tall') {
-      visualization = { type: 'text', data: { title: 'Note', content: '' } }
+    if (type === 'text') {
+      visualization = { type: 'text', data: { title: 'Headline', content: '' } }
     } else {
       visualization = { type: 'empty-diagram', data: {} }
     }
@@ -1210,24 +1255,10 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     }
   }, [])
 
-  // ── FAB: add widget at bottom of grid (click path) ──
-  const handleFabAdd = useCallback((type: FabDragType) => {
-    let maxY = 0
-    dashboardWidgets.forEach((w) => {
-      const b = w.layout.y + (w.layout.h ?? 1)
-      if (b > maxY) maxY = b
-    })
-    const iw = type === 'empty-diagram' ? 2 : 1
-    const ih = type === 'text-tall' ? 2 : 1
-    addWidget(buildManualWidget(type, 0, maxY, iw, ih))
-    setFabOpen(false)
-  }, [dashboardWidgets, addWidget, buildManualWidget])
-
-  // ── FAB: start drag from menu item ──
+  // ── FAB: start drag from menu item (pointer down only — click handled in onUp) ──
   const handleFabItemDragStart = useCallback((type: FabDragType, e: React.PointerEvent) => {
     e.preventDefault()
-    fabDragRef.current = { type, startX: e.clientX, startY: e.clientY }
-    setFabDragVisual({ type, x: e.clientX, y: e.clientY })
+    fabDragRef.current = { type, startX: e.clientX, startY: e.clientY, active: false }
     setFabOpen(false)
   }, [])
 
@@ -1235,6 +1266,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
   const handleGenerateDiagram = useCallback((widgetId: string, prompt: string) => {
     removeWidget(widgetId)
     sendUserMessage(prompt)
+    setEmptyDiagramDialogId(null)
   }, [removeWidget, sendUserMessage])
 
   const handleDownload = useCallback((widget: DashboardWidget) => {
@@ -1250,16 +1282,18 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     URL.revokeObjectURL(url)
   }, [])
 
-  // Grid container height based on reflowed positions (accounts for h > 1)
+  // Grid container height based on reflowed positions (accounts for h > 1 and headline widgets)
   const gridHeight = useMemo(() => {
     if (layoutMap.size === 0) return 0
     let maxBottom = 0
     layoutMap.forEach((p) => {
-      const bottom = toPixelY(p.y) + toPixelH(p.h)
+      const widget = dashboardWidgets.find((w) => w.id === p.id)
+      const pixH = widget ? getWidgetPixelHeight(widget, p.h) : toPixelH(p.h)
+      const bottom = toPixelY(p.y) + pixH
       if (bottom > maxBottom) maxBottom = bottom
     })
     return maxBottom
-  }, [layoutMap])
+  }, [layoutMap, dashboardWidgets])
 
   const isDragging = dragVisual !== null || fabDragVisual !== null
 
@@ -1330,7 +1364,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                 const displayW = placement?.w ?? Math.min(widget.layout.w, cols)
                 const displayH = placement?.h ?? (widget.layout.h ?? 1)
                 const w = isBeingResized ? resizeVisual.width : itemWidth(displayW)
-                const h = toPixelH(displayH)
+                const h = getWidgetPixelHeight(widget, displayH)
 
                 return (
                   <div
@@ -1356,7 +1390,11 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
                           visualization: { ...widget.visualization, data },
                         })
                       }
-                      onGenerateDiagram={(prompt) => handleGenerateDiagram(widget.id, prompt)}
+                      onOpenEmptyDiagramDialog={
+                        widget.visualization.type === 'empty-diagram'
+                          ? () => setEmptyDiagramDialogId(widget.id)
+                          : undefined
+                      }
                     />
                     {/* Resize handle — right edge */}
                     {cols >= 2 && (
@@ -1396,6 +1434,15 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         onDownload={() => fullscreenWidget && handleDownload(fullscreenWidget)}
       />
 
+      {/* Empty diagram dialog */}
+      <EmptyDiagramDialog
+        open={!!emptyDiagramDialogId}
+        onOpenChange={(open) => { if (!open) setEmptyDiagramDialogId(null) }}
+        onGenerate={(prompt) => {
+          if (emptyDiagramDialogId) handleGenerateDiagram(emptyDiagramDialogId, prompt)
+        }}
+      />
+
       {/* ── FAB ── */}
       <div
         className="absolute bottom-4 right-4 z-30 flex flex-col items-end gap-2"
@@ -1412,29 +1459,18 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
           {/* Empty diagram */}
           <button
             className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
-            onClick={() => handleFabAdd('empty-diagram')}
             onPointerDown={(e) => handleFabItemDragStart('empty-diagram', e)}
           >
             <BarChart2Icon className="h-4 w-4 text-muted-foreground" />
             New Chart
           </button>
-          {/* Text card — tall */}
+          {/* Headline text card */}
           <button
             className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
-            onClick={() => handleFabAdd('text-tall')}
-            onPointerDown={(e) => handleFabItemDragStart('text-tall', e)}
-          >
-            <TypeIcon className="h-4 w-4 text-muted-foreground" />
-            Text (tall)
-          </button>
-          {/* Text card — compact */}
-          <button
-            className="flex items-center gap-2 pl-3 pr-3.5 py-2 rounded-full bg-popover border border-border shadow-md text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-grab active:cursor-grabbing select-none"
-            onClick={() => handleFabAdd('text')}
             onPointerDown={(e) => handleFabItemDragStart('text', e)}
           >
-            <TypeIcon className="h-3.5 w-3.5 text-muted-foreground" />
-            Text
+            <TypeIcon className="h-4 w-4 text-muted-foreground" />
+            Headline
           </button>
         </div>
 
@@ -1459,7 +1495,7 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
             left: fabDragVisual.x - 60,
             top: fabDragVisual.y - 30,
             width: fabDragVisual.type === 'empty-diagram' ? 160 : 100,
-            height: fabDragVisual.type === 'text-tall' ? 80 : 50,
+            height: 50,
             pointerEvents: 'none',
             zIndex: 9999,
           }}
