@@ -5,7 +5,7 @@ from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 from src import db
@@ -182,6 +182,8 @@ def output_node(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
+    # Claude requires conversation to end with a user message
+    # messages = messages + [HumanMessage(content="Please provide your final response based on the analysis above.")]
     response = llm.invoke(messages)
     return {"messages": [response]}
 
@@ -228,6 +230,8 @@ def visualizer(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
+    # Claude requires conversation to end with a user message
+    messages = messages + [HumanMessage(content="Based on the results, decide if visualization is needed.")]
     response = llm_visualizer.invoke(messages)
     return {"messages": [response]}
 
@@ -251,9 +255,9 @@ def build_agent():
     graph_builder.add_node("output", output_node)
     graph_builder.add_edge(START, "agent")
     graph_builder.add_conditional_edges("agent", should_continue)
-    graph_builder.add_edge("tools", "visualizer")
-    graph_builder.add_edge("visualizer", "visual_tool")
-    graph_builder.add_edge("visual_tool", "output")
+    graph_builder.add_edge("tools", "output")
+    # graph_builder.add_edge("visualizer", "visual_tool")
+    # graph_builder.add_edge("visual_tool", "output")
     graph_builder.add_edge("output", END)
     return graph_builder.compile(checkpointer=memory)
 
