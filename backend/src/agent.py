@@ -1,5 +1,6 @@
 import base64
 import json
+import uuid
 import concurrent.futures
 import logging
 from typing import Literal
@@ -19,6 +20,17 @@ import os
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Module-level reference to the active Agent's tool_results, set by Agent._wrap_tool_node
+_active_tool_results: dict[str, dict] = {}
+
+
+def _resolve_data_id(data_id: str) -> str | None:
+    """Look up a data_id in the active tool results and return the stored data."""
+    entry = _active_tool_results.get(data_id)
+    if entry is None:
+        return None
+    return entry["data"]
 
 
 def _text_metrics(text: str | None) -> dict:
@@ -58,7 +70,10 @@ def _dump_invoke_context(node_name: str, messages: list):
     import time
     import os
     import json
-    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts")
+
+    debug_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts"
+    )
     os.makedirs(debug_dir, exist_ok=True)
     query_id = str(int(time.time() * 1000))
     debug_file = os.path.join(debug_dir, f"invoke_{node_name}_{query_id}.json")
@@ -66,16 +81,23 @@ def _dump_invoke_context(node_name: str, messages: list):
     dumpable_messages = []
     for msg in messages:
         try:
-            dumpable_messages.append({"type": type(msg).__name__, "content": getattr(msg, "content", "")})
+            dumpable_messages.append(
+                {"type": type(msg).__name__, "content": getattr(msg, "content", "")}
+            )
         except Exception:
             dumpable_messages.append({"type": str(type(msg)), "content": str(msg)})
 
     try:
         with open(debug_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "node": node_name,
-                "messages": dumpable_messages,
-            }, f, indent=2, ensure_ascii=False)
+            json.dump(
+                {
+                    "node": node_name,
+                    "messages": dumpable_messages,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
     except Exception as e:
         logger.error(f"Failed to dump invoke context: {e}")
 
@@ -136,6 +158,7 @@ MCP_SERVERS = {
 # mcp_client: MultiServerMCPClient = None
 # mcp_tools: list = []
 
+
 @tool
 async def get_sample_documents() -> str:
     """Returns sample documents from a collection as a string"""
@@ -144,13 +167,10 @@ async def get_sample_documents() -> str:
     return json.dumps(results, default=str)
 
 
-
 # Custom tool for Recharts-formatted aggregations (MCP's aggregate is generic)
 @tool
 async def get_aggregated_data_for_chart(
-    group_by_field: str,
-    aggregations: str,
-    match_filters: str = None
+    group_by_field: str, aggregations: str, match_filters: str = None
 ) -> str:
     """
     Get aggregated test data formatted for Recharts visualization.
@@ -172,7 +192,17 @@ async def get_aggregated_data_for_chart(
 
 
 @tool
-def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json: str, chart_config_json: str, description: str = "", replace_widget_id: str = "", widget_size: str = "1x2") -> str:
+def render_visualization(
+    chart_type: str,
+    title: str,
+    x_axis_key: str,
+    data_json: str,
+    chart_config_json: str,
+    description: str = "",
+    replace_widget_id: str = "",
+    widget_size: str = "1x2",
+    data_id: str = "",
+) -> str:
     """
     Render a chart on the user's dashboard.
     ALWAYS call this when displaying aggregated/statistical data.
@@ -201,7 +231,21 @@ def render_visualization(chart_type: str, title: str, x_axis_key: str, data_json
             "1x2" — standard wide chart (default), good for most bar/line/area charts
             "2x1" — tall narrow chart, good for vertical distributions or ranked lists
             "2x2" — large square chart, best for complex multi-series, boxplots with many groups, or scatter plots needing detail
+        data_id: Optional data_id from a previous MongoDB tool result. ONLY use this when the
+            referenced data is already FLAT Recharts-compatible records (e.g. from an `aggregate`
+            pipeline with a `$project` stage that outputs flat objects). Do NOT use data_id for
+            raw `find` results — those contain nested documents that the chart cannot render.
+            When in doubt, build data_json manually or use run_python_analysis to reshape first.
     """
+    if data_id:
+        resolved = _resolve_data_id(data_id)
+        if resolved is not None:
+            data_json = resolved
+        else:
+            logger.warning(
+                "render_visualization: unknown data_id %s, falling back to data_json",
+                data_id,
+            )
     return "Visualization successfully rendered on UI."
 
 @tool
@@ -268,8 +312,9 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
     """
     return "Answer submitted."
 
+
 @tool
-def run_python_analysis(code: str, data_json: str) -> str:
+def run_python_analysis(code: str, data_json: str = "", data_id: str = "") -> str:
     """
     Execute a Python code snippet for statistical analysis on material testing data.
 
@@ -277,7 +322,7 @@ def run_python_analysis(code: str, data_json: str) -> str:
     outlier detection, correlation analysis, descriptive statistics.
 
     The execution environment pre-populates:
-      - `data`: list of dicts parsed from data_json
+      - `data`: list of dicts parsed from data_json (or resolved from data_id)
       - `df`: pandas DataFrame built from data
       - `np`: numpy
       - `pd`: pandas
@@ -288,6 +333,9 @@ def run_python_analysis(code: str, data_json: str) -> str:
     Args:
         code: Python snippet. Must assign `result` to capture output.
         data_json: JSON string (list of dicts) from a `find` or `aggregate` call.
+            Can be omitted if data_id is provided.
+        data_id: Optional data_id from a previous MongoDB tool result. If provided,
+            the referenced dataset is resolved and used instead of data_json.
 
     Returns:
         JSON string with keys "output" (stdout) and "result" (value of `result`).
@@ -299,20 +347,54 @@ def run_python_analysis(code: str, data_json: str) -> str:
 
     TIMEOUT_SECONDS = 10
 
-    try:
-        data = json.loads(data_json) if data_json else []
-    except json.JSONDecodeError as e:
-        return json.dumps({"error": f"Failed to parse data_json: {e}", "output": "", "result": None})
+    # Resolve data_id if provided
+    if data_id:
+        resolved = _resolve_data_id(data_id)
+        if resolved is not None:
+            if isinstance(resolved, str):
+                try:
+                    data = json.loads(resolved)
+                except json.JSONDecodeError as e:
+                    return json.dumps(
+                        {
+                            "error": f"Failed to parse resolved data: {e}",
+                            "output": "",
+                            "result": None,
+                        }
+                    )
+            else:
+                data = resolved
+        else:
+            return json.dumps(
+                {"error": f"Unknown data_id: {data_id}", "output": "", "result": None}
+            )
+    else:
+        try:
+            data = json.loads(data_json) if data_json else []
+        except json.JSONDecodeError as e:
+            return json.dumps(
+                {
+                    "error": f"Failed to parse data_json: {e}",
+                    "output": "",
+                    "result": None,
+                }
+            )
 
     repl = PythonREPL()
-    repl.globals.update({
-        "np": np,
-        "pd": pd,
-        "stats": stats,
-        "data": data,
-        "df": pd.DataFrame(data) if data else pd.DataFrame(),
-        "result": None,
-    })
+    repl.globals.update(
+        {
+            "np": np,
+            "pd": pd,
+            "stats": stats,
+            "data": data,
+            "df": (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data and isinstance(data[0], dict)
+                else pd.DataFrame()
+            ),
+            "result": None,
+        }
+    )
 
     def _execute():
         return repl.run(code)
@@ -322,17 +404,21 @@ def run_python_analysis(code: str, data_json: str) -> str:
             future = executor.submit(_execute)
             output = future.result(timeout=TIMEOUT_SECONDS)
     except concurrent.futures.TimeoutError:
-        return json.dumps({
-            "error": f"Execution timed out after {TIMEOUT_SECONDS} seconds.",
-            "output": "",
-            "result": None,
-        })
+        return json.dumps(
+            {
+                "error": f"Execution timed out after {TIMEOUT_SECONDS} seconds.",
+                "output": "",
+                "result": None,
+            }
+        )
     except Exception as e:
-        return json.dumps({
-            "error": f"Execution error: {type(e).__name__}: {e}",
-            "output": "",
-            "result": None,
-        })
+        return json.dumps(
+            {
+                "error": f"Execution error: {type(e).__name__}: {e}",
+                "output": "",
+                "result": None,
+            }
+        )
 
     raw_result = repl.globals.get("result") or repl.locals.get("result")
     try:
@@ -340,10 +426,12 @@ def run_python_analysis(code: str, data_json: str) -> str:
     except Exception:
         serialized_result = str(raw_result)
 
-    return json.dumps({
-        "output": output,
-        "result": serialized_result,
-    })
+    return json.dumps(
+        {
+            "output": output,
+            "result": serialized_result,
+        }
+    )
 
 
 # Custom tools (Recharts-specific, kept alongside MCP tools)
@@ -381,8 +469,6 @@ async def init_mcp_client():
         tool_node = ToolNode(_all_tools)
         llm_with_tools = llm.bind_tools(_all_tools)
 
-
-
         return mcp_tools
     except Exception as e:
         raise Exception("Exception occured:", e)
@@ -393,7 +479,6 @@ async def shutdown_mcp_client():
     global mcp_client
     # New API doesn't require explicit cleanup
     mcp_client = None
-
 
 
 # system_prompt = """You are Backprop Bandits, an AI material testing assistant with MongoDB database access.
@@ -472,8 +557,9 @@ async def shutdown_mcp_client():
 # You should inspect if the previous results would benefit from a visualization. If you want to visualize
 # use the render_visualization function to visualize the data. If not, still call the function with none values."""
 
+
 def call_model(state: MessagesState):
-    messages = state['messages']
+    messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=system_prompt)] + messages
     metrics = _message_metrics(messages)
@@ -487,7 +573,9 @@ def call_model(state: MessagesState):
     _dump_invoke_context("call_model", messages)
     response = llm_with_tools.invoke(messages)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    action_label = (
+        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    )
     logger.warning("[context-debug] call_model action: %s", action_label)
     return {"messages": [response]}
 
@@ -504,7 +592,9 @@ def output_node(state: MessagesState):
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
     # Claude requires conversation to end with a user message after tool results
-    messages = messages + [HumanMessage(content="Given the current conversation, summarize to an answer.")]
+    messages = messages + [
+        HumanMessage(content="Given the current conversation, summarize to an answer.")
+    ]
     metrics = _message_metrics(messages)
     logger.info(
         "[context-debug] output_node payload: messages=%s total_chars=%s est_tokens=%s",
@@ -515,9 +605,12 @@ def output_node(state: MessagesState):
     _dump_invoke_context("output_node", messages)
     response = llm_output.invoke(messages)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    action_label = (
+        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    )
     logger.info("[context-debug] output_node action: %s", action_label)
     return {"messages": [response]}
+
 
 # def self_critic(state: MessagesState):
 #     global global_count
@@ -535,17 +628,17 @@ def output_node(state: MessagesState):
 #     print("Last:", last_message)  # ← .content not .text
 
 
-    # try:
-    #     import json
-    #     critique = json.loads(last_message.content)
-    #     print("Verdict:", critique["verdict"])
-    #     if critique["verdict"] == "retry":
-    #         return "output"
-    #     else:
-    #         return "output"
-    # except Exception as e:
-    #     print("Parse error:", e)
-    #     return "output"
+# try:
+#     import json
+#     critique = json.loads(last_message.content)
+#     print("Verdict:", critique["verdict"])
+#     if critique["verdict"] == "retry":
+#         return "output"
+#     else:
+#         return "output"
+# except Exception as e:
+#     print("Parse error:", e)
+#     return "output"
 
 
 # def intermediate_output_node(state: MessagesState):
@@ -558,12 +651,17 @@ def output_node(state: MessagesState):
 #     global_count += 1
 #     return {"messages": [response]}
 
+
 def visualizer(state: MessagesState):
-    messages = state['messages']
+    messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message
-    messages = messages + [HumanMessage(content="Based on the results and the user's request, decide what dashboard actions to take. You can: render new visualizations with render_visualization, remove widgets with remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed.")]
+    messages = messages + [
+        HumanMessage(
+            content="Based on the results and the user's request, decide what dashboard actions to take. You can: render new visualizations with render_visualization, remove widgets with remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed."
+        )
+    ]
     metrics = _message_metrics(messages)
     logger.info(
         "[context-debug] visualizer payload: messages=%s total_chars=%s est_tokens=%s",
@@ -573,11 +671,14 @@ def visualizer(state: MessagesState):
     )
     _dump_invoke_context("visualizer", messages)
     response = llm_visualizer.invoke(messages)
-    print("hi",response)
+    print("hi", response)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    action_label = (
+        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
+    )
     logger.info("[context-debug] visualizer action: %s", action_label)
     return {"messages": [response]}
+
 
 def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
     messages = state["messages"]
@@ -586,6 +687,7 @@ def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
         return "visual_tool"
     return "output"
 
+
 memory = MemorySaver()
 
 system_prompt = ""
@@ -593,26 +695,35 @@ output_system_prompt = ""
 visualizer_system_prompt = ""
 self_critic_system_prompt = ""
 
+
 class Agent:
     def __init__(self, message, similar_text, dashboard_widgets=None):
         self.message = message
         self.similar_text = similar_text
         self.dashboard_widgets = dashboard_widgets or []
-        similar_data = "you are given the following similar text from a vectordb: " + self.similar_text
+        self.tool_results: dict[str, dict] = {}
+        similar_data = (
+            "you are given the following similar text from a vectordb: "
+            + self.similar_text
+        )
 
         # Build dashboard context string
         dashboard_context = ""
         if self.dashboard_widgets:
             widget_descriptions = []
             for w in self.dashboard_widgets:
-                selected_marker = " ⭐ SELECTED" if w.get('selected') else ""
+                selected_marker = " ⭐ SELECTED" if w.get("selected") else ""
                 desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)}){selected_marker}"
                 pts = w.get('selected_data_points', [])
                 if pts:
                     import json as _json
                     desc += f"\n  Selected data points: {_json.dumps(pts)}"
                 widget_descriptions.append(desc)
-            selected_note = "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's question — focus analysis and modifications on these." if any(w.get('selected') for w in self.dashboard_widgets) else ""
+            selected_note = (
+                "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's question — focus analysis and modifications on these."
+                if any(w.get("selected") for w in self.dashboard_widgets)
+                else ""
+            )
             dashboard_context = f"""
 
 CURRENT DASHBOARD STATE:
@@ -639,7 +750,8 @@ You can reference existing widgets when answering. If the user asks to rearrange
         for Measurements, take a look at the channelParameterMap
         some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
 
-        system_prompt = """You are an AI material testing assistant with MongoDB database access.
+        system_prompt = (
+            """You are an AI material testing assistant with MongoDB database access.
 
         {DB_CONTEXT}
 
@@ -652,14 +764,35 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - `list-collections` - See available collections
         - `count` - Count matching documents
 
+        IMPORTANT — data_id and tool result format:
+        Every tool result is returned as a JSON object with these fields:
+        - `data_id` (UUID): Reference to the stored dataset. Pass this to `run_python_analysis` or
+          `render_visualization` instead of copying data into `data_json`.
+        - `info` (list of strings): Metadata/headers from the tool (e.g. "The aggregation resulted in 30 documents.").
+        - `result` (the actual data): The extracted query data as structured JSON (e.g. [{"name": "A", "count": 10}, ...]).
+
+        Example response:
+        { "data_id": "6da86", "info": ["Found 30 documents."], "result": [{"name": "Probe 1", "count": 937}] }
+
+        If the data is too large, `result` is replaced by `summary` — a truncated preview:
+        { "data_id": "6da86", "info": ["Found 3505 documents."], "summary": [{"name": "Probe 1", "count": 937}, ..., "<TRUNCATED 3495 items>"] }
+        Even when summarized, the full dataset is stored and accessible via `data_id`.
+        Summaries truncate lists to 10 items, strings to 50 chars, and recurse into nested objects.
+
         Custom tools:
-        - `get_sample_documents` - Fetch sample documents from the database to understand the data structure
-        - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
         - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
+            Accepts either `data_json` (raw JSON string) or `data_id` (from a previous MongoDB result).
+            Works with any data shape — your Python code handles the structure.
+        - `render_visualization` - Display charts on the UI
+            Accepts an optional `data_id`, but ONLY when the referenced data is already FLAT
+            Recharts-compatible records (e.g. from an `aggregate` with `$project` that outputs
+            flat objects like [{"name": "A", "value": 10}]).
+            Do NOT pass data_id from raw `find` results — those are nested and will break the chart.
+            For nested data, either build data_json manually or use run_python_analysis to reshape first.
 
         Statistical Analysis workflow:
-        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data as a JSON list
-        2. Pass that JSON string into `run_python_analysis` as `data_json`
+        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data — note the `data_id` from the response
+        2. Pass the `data_id` into `run_python_analysis` (or pass the raw JSON as `data_json`)
         3. Write a Python snippet that assigns the final answer to `result`
         4. Use the returned `result` to compose your natural-language answer
 
@@ -689,7 +822,8 @@ You can reference existing widgets when answering. If the user asks to rearrange
         If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
         """ + similar_data + dashboard_context
 
-        output_system_prompt = """You are a material testing AI assistant.
+        output_system_prompt = (
+            """You are a material testing AI assistant.
 
         Based on the tool results and analysis above:
         1. Write a clear, concise answer to the user's question
@@ -703,10 +837,14 @@ You can reference existing widgets when answering. If the user asks to rearrange
         Never tell the user that text or headline widgets are unsupported — they are fully supported.
         """ + similar_data + be_professional
 
-        intermediate_output_system_prompt = """briefly summarize the findings
-        """ + similar_data
+        intermediate_output_system_prompt = (
+            """briefly summarize the findings
+        """
+            + similar_data
+        )
 
-        self_critic_system_prompt = """You are a critical reviewer of material testing analysis.
+        self_critic_system_prompt = (
+            """You are a critical reviewer of material testing analysis.
 
         Review the previous conversation history and output ONLY a JSON object:
         {
@@ -723,9 +861,12 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - accept: answer is well supported by data
         - retry: answer needs more data, specify which tool to call
         - escalate: query is too complex, needs deeper analysis
-        """ + similar_data
+        """
+            + similar_data
+        )
 
-        visualizer_system_prompt = """You are Backprop Bandits, an AI material testing assistant.
+        visualizer_system_prompt = (
+            """You are Backprop Bandits, an AI material testing assistant.
         You should inspect if the previous results would benefit from a visualization. If you want to visualize
         use the render_visualization function to visualize the data. Visualize if possible!
         Render a chart on the user's dashboard.
@@ -798,28 +939,154 @@ You can reference existing widgets when answering. If the user asks to rearrange
         import time
         import os
         import json
-        debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts")
+
+        debug_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts"
+        )
         os.makedirs(debug_dir, exist_ok=True)
         query_id = str(int(time.time() * 1000))
         debug_file = os.path.join(debug_dir, f"query_{query_id}.json")
         try:
             with open(debug_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "user_message": self.message,
-                    "similar_text": self.similar_text,
-                    "dashboard_widgets": self.dashboard_widgets,
-                    "system_prompt": system_prompt,
-                    "output_system_prompt": output_system_prompt,
-                    "visualizer_system_prompt": visualizer_system_prompt,
-                }, f, indent=2, ensure_ascii=False)
+                json.dump(
+                    {
+                        "user_message": self.message,
+                        "similar_text": self.similar_text,
+                        "dashboard_widgets": self.dashboard_widgets,
+                        "system_prompt": system_prompt,
+                        "output_system_prompt": output_system_prompt,
+                        "visualizer_system_prompt": visualizer_system_prompt,
+                    },
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
         except Exception as e:
             logger.error(f"Failed to dump debug context: {e}")
+
+    MAX_ITERABLE_SUMMARY_COUNT = 10
+    MAX_STRING_SUMMARY_LENGTH = 50
+
+    def _summarize_json(self, object):
+        # alter json object recursively by limiting size of list objects
+        if isinstance(object, str):
+            if len(object) > self.MAX_STRING_SUMMARY_LENGTH:
+                return (
+                    object[: self.MAX_STRING_SUMMARY_LENGTH]
+                    + f"... <TRUNCATED {len(object)-self.MAX_STRING_SUMMARY_LENGTH} characters>"
+                )
+            return object
+        if isinstance(object, list):
+            summarized = [
+                self._summarize_json(item)
+                for item in object[: self.MAX_ITERABLE_SUMMARY_COUNT]
+            ]
+            if len(object) > self.MAX_ITERABLE_SUMMARY_COUNT:
+                summarized.append(
+                    f"<TRUNCATED {len(object)-self.MAX_ITERABLE_SUMMARY_COUNT} items>"
+                )
+            return summarized
+        if isinstance(object, dict):
+            return {k: self._summarize_json(v) for k, v in object.items()}
+        return object
+
+    MAX_CONTEXT_RESULT_SIZE = 10000
+
+    @staticmethod
+    def _extract_mcp_data(structured_data):
+        """Extract headers and actual data payload from MCP content blocks.
+
+        MCP tools return content as a list of text blocks where the actual query
+        data is embedded inside <untrusted-user-data-*> tags in one of the blocks.
+        Other blocks contain header info (e.g. "Found 30 documents.").
+
+        Returns (headers: list[str], data: any):
+          - headers: text from non-data content blocks
+          - data: the parsed JSON payload, or the original input if extraction fails
+        """
+        import re
+
+        if not isinstance(structured_data, list):
+            return [], structured_data
+        headers = []
+        extracted_data = None
+        for block in structured_data:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text", "")
+            match = re.search(
+                r"<untrusted-user-data-[^>]+>\s*(.*?)\s*</untrusted-user-data-[^>]+>",
+                text,
+                re.DOTALL,
+            )
+            if match and extracted_data is None:
+                try:
+                    extracted_data = json.loads(match.group(1))
+                except (json.JSONDecodeError, TypeError):
+                    headers.append(text)
+            else:
+                headers.append(text)
+        if extracted_data is not None:
+            return headers, extracted_data
+        return headers, structured_data
+
+    async def _wrap_tool_node(self, state: MessagesState):
+        """Wrap tool_node to intercept and store MCP tool results."""
+        global _active_tool_results
+        # Keep module-level reference in sync so @tool functions can resolve data_ids
+        _active_tool_results = self.tool_results
+        result = await tool_node.ainvoke(state)
+        for msg in result.get("messages", []):
+            tool_name = getattr(msg, "name", None)
+            result_id = str(uuid.uuid4())
+            # Parse content and extract actual data from MCP content blocks.
+            content = msg.content
+            if isinstance(content, str):
+                try:
+                    structured_data = json.loads(content)
+                except (json.JSONDecodeError, TypeError):
+                    structured_data = content
+            else:
+                structured_data = content
+
+            # Extract headers (e.g. "Found 30 documents.") and the actual data payload
+            headers, extracted = self._extract_mcp_data(structured_data)
+            self.tool_results[result_id] = {
+                "tool_name": tool_name,
+                "tool_call_id": getattr(msg, "tool_call_id", None),
+                "data": extracted,
+            }
+
+            # Build clean LLM-facing content with headers + data (or summary)
+            extracted_json = json.dumps(extracted)
+            if len(extracted_json) > self.MAX_CONTEXT_RESULT_SIZE:
+                data_for_llm = self._summarize_json(extracted)
+                print(
+                    "JSON SUMMARY: Reduced tool result from",
+                    len(extracted_json),
+                    "chars to",
+                    len(json.dumps(data_for_llm)),
+                    "chars",
+                )
+                llm_content = {
+                    "data_id": result_id,
+                    "info": headers,
+                    "summary": data_for_llm,
+                }
+            else:
+                llm_content = {
+                    "data_id": result_id,
+                    "info": headers,
+                    "result": extracted,
+                }
+            msg.content = json.dumps(llm_content)
+        return result
 
     def build_agent(self):
         """Build the agent graph. Called after MCP tools are initialized."""
         graph_builder = StateGraph(MessagesState)
         graph_builder.add_node("agent", call_model)
-        graph_builder.add_node("tools", tool_node)
+        graph_builder.add_node("tools", self._wrap_tool_node)
         graph_builder.add_node("visualizer", visualizer)
         graph_builder.add_node("visual_tool", visualization_tool)
         graph_builder.add_node("output", output_node)
