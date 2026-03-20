@@ -12,6 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 from src import db
+from src import memory as agent_memory
 from langchain_core.messages import trim_messages
 
 import os
@@ -346,8 +347,34 @@ def run_python_analysis(code: str, data_json: str) -> str:
     })
 
 
+@tool
+def save_memory(summary: str, detail: str, memory_type: str) -> str:
+    """
+    Persist an insight to long-term memory so it can inform future conversations.
+
+    Call this when you discover something genuinely worth remembering across sessions:
+    - A statistically confirmed trend or degradation pattern
+    - A material property baseline (mean ± std with sample count)
+    - A data quality issue (e.g. a tester producing systematic outliers)
+    - A confirmed correlation between a test parameter and a measured property
+
+    Do NOT call for routine query results, single data points, or anything obvious.
+    One memorable insight per response at most.
+
+    Args:
+        summary:     One-sentence headline, e.g. "Tensile strength of PA12 White
+                     shows a statistically significant downward trend (p=0.003)."
+        detail:      Full detail: numbers, date range, sample count, method used.
+                     E.g. "Linear regression over 127 tensile tests (Feb 2024 –
+                     Oct 2025): slope = -0.8 MPa/month, R²=0.71, p=0.003.
+                     Baseline mean: 44.2 MPa (std 2.1 MPa)."
+        memory_type: One of 'finding', 'pattern', 'baseline', 'quality_issue', 'correction'.
+    """
+    return agent_memory.save_memory(summary, detail, memory_type)
+
+
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [run_python_analysis]
+custom_tools = [run_python_analysis, save_memory]
 tool_node = ToolNode(custom_tools)
 dashboard_tools = [render_visualization, render_text_block, remove_widget, reorder_dashboard]
 visualization_tool = ToolNode(dashboard_tools)
@@ -371,7 +398,9 @@ async def init_mcp_client():
         mcp_client = MultiServerMCPClient(MCP_SERVERS)
 
         # New API: get_tools() is async and handles connection internally
+        allowed_set = set(["aggregate","collection-indexes", "collection-schema","collection-storage-size","count","db-stats","explain","find","list-collections","list-databases","mongodb-logs","list-knowledge-sources","search-knowledge"])
         mcp_tools = await mcp_client.get_tools()
+        mcp_tools = filter(mcp_tools, lambda x: x.name in allowed_set)
         print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
         for t in mcp_tools:
             print(f"  - {t.name}: {t.description[:60]}...")
@@ -491,10 +520,12 @@ def call_model(state: MessagesState):
     logger.warning("[context-debug] call_model action: %s", action_label)
     return {"messages": [response]}
 
+allowed_funcs = 
 
 def should_continue(state: MessagesState) -> Literal["tools", "visualizer"]:
     last_message = state["messages"][-1]
     if last_message.tool_calls:
+        last_message.tool_calls = filter(last_message.tool_calls, lambda x: x in allowed_funcs)
         return "tools"
     return "visualizer"
 
@@ -624,6 +655,27 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         be_professional = "Be very professional!"
 
+        # ── Long-term memory retrieval ────────────────────────────────────────
+        memory_context = ""
+        try:
+            relevant_memories = agent_memory.get_relevant_memories(message, n_results=6)
+            if relevant_memories:
+                lines = []
+                for m in relevant_memories:
+                    age = f" ({m['created_at'][:10]})" if m.get("created_at") else ""
+                    lines.append(f"  • [{m['type'].upper()}]{age} {m['summary']}")
+                memory_context = (
+                    "\n\nLONG-TERM MEMORY — verified insights from previous analyses "
+                    "(treat as established background knowledge, not assumptions):\n"
+                    + "\n".join(lines)
+                    + "\n\nIf your current analysis confirms, contradicts, or extends one of these "
+                    "memories, call save_memory to update the knowledge base."
+                    "\nOnly call save_memory when you find something genuinely new or surprising.\n"
+                )
+        except Exception as _mem_err:
+            logger.warning("[memory] retrieval skipped: %s", _mem_err)
+        # ─────────────────────────────────────────────────────────────────────
+
         global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
 
         uuid = """UUIDs
@@ -656,6 +708,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - `get_sample_documents` - Fetch sample documents from the database to understand the data structure
         - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
         - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
+        - `save_memory` - Persist a significant finding to long-term memory for future sessions
 
         Statistical Analysis workflow:
         1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data as a JSON list
@@ -687,7 +740,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         Dashboard also supports text/headline widgets via render_text_block (handled in a later step).
         If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
-        """ + similar_data + dashboard_context
+        """ + memory_context + similar_data + dashboard_context
 
         output_system_prompt = """You are a material testing AI assistant.
 
