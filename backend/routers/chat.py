@@ -204,9 +204,9 @@ async def chat_stream(req: ChatRequest):
                 if req.dashboard_widgets
                 else []
             )
-            tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
+            tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx, session_id=req.session_id)
             agent = tmp.create()
-            config = {"configurable": {"thread_id": session.session_id}, "recursion_limit": 50}
+            config = {"configurable": {"thread_id": session.session_id}}
 
             full_text = ""
             visualization = None
@@ -216,7 +216,9 @@ async def chat_stream(req: ChatRequest):
             query_used = None
 
             async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=req.message)]}, config, version="v2"
+                {"messages": [HumanMessage(content=req.message)], "iteration_count": 0},
+                config,
+                version="v2",
             ):
                 kind = event["event"]
                 if kind == "on_chat_model_stream":
@@ -457,7 +459,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         from src.agent import Agent
         from langchain_core.messages import HumanMessage
 
-        config = {"configurable": {"thread_id": session.session_id}, "recursion_limit": 50}
+        config = {"configurable": {"thread_id": session.session_id}}
         request_metrics = _text_metrics(req.message)
         logger.info(
             "[context-debug] chat request: chars=%s bytes=%s est_tokens=%s",
@@ -473,10 +475,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
             similar_metrics["bytes"],
             similar_metrics["est_tokens"],
         )
-        tmp = Agent(req.message, similar_messages)
+        tmp = Agent(req.message, similar_messages, session_id=req.session_id)
         agent = tmp.create()
         response = await agent.ainvoke(
-            {"messages": [HumanMessage(content=req.message)]}, config
+            {"messages": [HumanMessage(content=req.message)], "iteration_count": 0},
+            config,
         )
 
         # Process output

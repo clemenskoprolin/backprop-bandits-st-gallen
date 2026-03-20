@@ -29,8 +29,15 @@ _active_tool_results: dict[str, dict] = {}
 MAX_AGENT_ITERATIONS = 15
 
 
+def _iteration_count_reducer(current: int | None, update: int) -> int:
+    """Custom reducer: 0 resets the counter (used at query start); positive values accumulate."""
+    if update == 0:
+        return 0
+    return (current or 0) + update
+
+
 class AgentState(MessagesState):
-    iteration_count: Annotated[int, operator.add]
+    iteration_count: Annotated[int, _iteration_count_reducer]
 
 
 def _resolve_data_id(data_id: str) -> str | None:
@@ -633,8 +640,8 @@ tool_node = ToolNode(custom_tools + dashboard_tools, handle_tool_errors=True)
 visualization_tool = ToolNode(dashboard_tools, handle_tool_errors=True)
 submit_tool = ToolNode([submit_answer], handle_tool_errors=True)
 
-llm = ChatAnthropic(model="claude-sonnet-4-6")
-# llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
+# llm = ChatAnthropic(model="claude-sonnet-4-6")
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
 # llm = ChatOpenAI(model="gpt-5.4")
 # llm = ChatOpenAI(
 #     model="zai-glm-4.7",
@@ -876,13 +883,14 @@ system_prompt_no_db = ""
 output_system_prompt = ""
 visualizer_system_prompt = ""
 self_critic_system_prompt = ""
-
+count_iteration = dict()
 
 class Agent:
-    def __init__(self, message, similar_text, dashboard_widgets=None):
+    def __init__(self, message, similar_text, dashboard_widgets=None, session_id=None):
         self.message = message
         self.similar_text = similar_text
         self.dashboard_widgets = dashboard_widgets or []
+        self.session_id = session_id
         self.tool_results: dict[str, dict] = {}
         similar_data = (
             "you are given the following similar text from a vectordb: "
