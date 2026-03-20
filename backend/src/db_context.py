@@ -292,7 +292,7 @@ Each entry in the `valuecolumns` array has these fields:
 ## `valuecolumns_migrated` — field schema (live, from sample document)
 
 One document per migrated channel per test. The `values` array is omitted here
-— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed.
+— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed. Always limit requests to this to 100 entries.
 
 {schema_migrated}
 
