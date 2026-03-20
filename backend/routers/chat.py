@@ -312,6 +312,12 @@ async def chat_stream(req: ChatRequest):
                                     data = resolved
                             if isinstance(data, str):
                                 data = json.loads(data)
+                            # run_python_analysis wraps output as {"output": ..., "result": ...}
+                            # Extract the actual data array from the "result" key
+                            if isinstance(data, dict) and "result" in data:
+                                data = data["result"]
+                            if not isinstance(data, list):
+                                data = []
                             chart_config = kwargs.get("chart_config_json", "{}")
                             if isinstance(chart_config, str):
                                 chart_config = json.loads(chart_config)
@@ -509,6 +515,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                         data = json.loads(data)
                                     except:
                                         data = []
+                                # run_python_analysis wraps output as {"output": ..., "result": ...}
+                                # Extract the actual data array from the "result" key
+                                if isinstance(data, dict) and "result" in data:
+                                    data = data["result"]
+                                if not isinstance(data, list):
+                                    data = []
                                 chart_config = kwargs.get("chart_config_json", "{}")
                                 if isinstance(chart_config, str):
                                     try:

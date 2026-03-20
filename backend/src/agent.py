@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Module-level reference to the active Agent's tool_results, set by Agent._wrap_tool_node
 _active_tool_results: dict[str, dict] = {}
 
-MAX_AGENT_ITERATIONS = 15
+MAX_AGENT_ITERATIONS = 40
 
 
 class AgentState(MessagesState):
@@ -231,12 +231,27 @@ Fields:
 
 **Join key:** `_tests._id` === `valuecolumns_migrated.metadata.refId` (one test → ~287 value column entries)
 
-**childId decoding:** `valuecolumns_migrated.metadata.childId` starts with the valueColumn's `_id` from `_tests.valueColumns[]._id`, followed by a dot.
+**childId format:** `{valueTableId}.{valueTableId}_Value`
+Example: if `valueTableId` = `{E5F23924-1A5D-40a6-B66D-62E708B1DF83}-Zwick.Unittable.Force`, then
+`childId` = `{E5F23924-1A5D-40a6-B66D-62E708B1DF83}-Zwick.Unittable.Force.{E5F23924-1A5D-40a6-B66D-62E708B1DF83}-Zwick.Unittable.Force_Value`
+
+**IMPORTANT:** Do NOT try to construct exact childIds manually — use `$regex` on the `unitTableId` instead.
 
 **Workflow to get actual values:**
-1. Find the test in `_tests`
-2. Identify the relevant `valueColumns[]._id` for the desired measurement (by name or unitTableId)
-3. Query `valuecolumns_migrated` filtering by `metadata.refId` = test `_id` AND `metadata.childId` matching the valueColumn
+1. Find the test in `_tests`, note its `_id`
+2. Query `valuecolumns_migrated` with `metadata.refId` = test `_id` and use `$regex` on `metadata.childId` to match the measurement type
+3. For time-series: filter `valuesCount > 1`. For single results: filter `valuesCount: 1`.
+
+**Preferred query pattern for time-series data** (e.g. strain vs force):
+```json
+{"$match": {"metadata.refId": "<test_id>", "valuesCount": {"$gt": 1}, "metadata.childId": {"$regex": "Zwick\\.Unittable\\.Force.*_Value$"}}}
+```
+Use `$regex` patterns like `Zwick\\.Unittable\\.Displacement.*_Value$` for strain/displacement,
+`Zwick\\.Unittable\\.Force.*_Value$` for force, etc. This avoids childId format errors.
+
+**Column selection tips:**
+- Each measurement has multiple derived channels (Force, Stress, ForcePerDisplacement, ForcePerTiter). Pick the base unit you need.
+- When multiple channels match the same unitTableId, prefer the one with `valuesCount` = 3028 (full time-series) over valuesCount = 5 (summary points).
 
 ### $lookup Example — Join _tests with valuecolumns_migrated (run on `_tests`):
 ```json
@@ -266,8 +281,8 @@ Fields:
 - Use `$project` to keep only needed fields — `values` arrays can be very large for time-series data.
 
 ### UUID References
-- `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
-- The unitTableId in `_tests.valueColumns` (e.g. `"Zwick.Unittable.Force"`) indicates the measurement type
+- The `unitTableId` in `_tests.valueColumns` (e.g. `"Zwick.Unittable.Force"`) indicates the measurement type
+- Use `unitTableId` with `$regex` to find the right `valuecolumns_migrated` entries — do NOT construct `childId` manually
 
 ### Query Tips
 - The full schema is provided above. Go directly to `find` or `aggregate` — no need to discover the schema first.
@@ -703,11 +718,7 @@ async def shutdown_mcp_client():
 def call_model(state: AgentState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
-        # Include DB_CONTEXT only on the first call; after MCP tool results
-        # are in the conversation the schema context is no longer needed.
-        has_tool_results = any(getattr(m, "type", None) == "tool" for m in messages)
-        prompt = system_prompt_no_db if has_tool_results else system_prompt
-        messages = [SystemMessage(content=prompt)] + messages
+        messages = [SystemMessage(content=system_prompt)] + messages
     metrics = _message_metrics(messages)
     logger.warning(
         "[context-debug] call_model payload: messages=%s total_chars=%s est_tokens=%s per_message_chars=%s",
@@ -943,6 +954,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - `collection-schema` - Inspect collection structure (only needed for collections not documented above)
         - `list-databases` / `list-collections` - Only needed for unusual requests outside the documented schema
 
+        CRITICAL REMINDERS:
+        - There are ONLY 4 collections: `_tests`, `valuecolumns_migrated`, `unittables_new`, `translations`.
+          There is NO `_timeseries` collection. Time-series and result values are in `valuecolumns_migrated`.
+        - To get actual measured values: query `valuecolumns_migrated` with `metadata.refId` = test `_id`.
+        - If a `find` returns 0 results, check your field names (CASE-SENSITIVE) and filter values before retrying.
+          Do NOT assume the collection is wrong.
+
         IMPORTANT — data_id and tool result format:
         Every tool result is returned as a JSON object with these fields:
         - `data_id` (UUID): Reference to the stored dataset. Pass this to `run_python_analysis` or
@@ -967,12 +985,25 @@ You can reference existing widgets when answering. If the user asks to rearrange
             When using `data_ids`, all datasets are available in the `datasets` dict (keyed by data_id),
             and the first dataset is also set as `data`/`df` for convenience.
 
+        IMPORTANT — `data_id` vs `data_ids` in run_python_analysis:
+        - `data_id` (single): sets `data` variable. Access via `data`, NOT `datasets`.
+        - `data_ids` (list): sets `datasets` dict (keyed by data_id). Access via `datasets["<id>"]`.
+          The first dataset is also available as `data`.
+        - NEVER pass a data_id from a `$slice` or preview query and expect full data — you'll get the truncated version.
+        - If you used `$slice` to preview, you MUST re-query WITHOUT `$slice` before analysis.
+
         Statistical Analysis workflow:
         1. Use `find` or `aggregate` to retrieve raw data — note the `data_id` from each response
         2. If statistical computation is needed, pass the `data_id` into `run_python_analysis`
            For multi-dataset analysis, pass multiple IDs via `data_ids`
         3. Write a Python snippet that assigns the final answer to `result`
         4. Use the returned `result` to compose your natural-language answer
+
+        CRITICAL — Chart data format:
+        When producing data for charts, `result` MUST be a FLAT list of records (Recharts format):
+          result = [{{"strain": 0.1, "force": 100}}, {{"strain": 0.2, "force": 200}}, ...]
+        NEVER use {{"x": [...], "y": [...]}} format — the chart WILL be empty.
+        Downsample to ~500 points max for performance.
 
         Example — t-test between two groups:
           code = \"\"\"
@@ -982,12 +1013,13 @@ You can reference existing widgets when answering. If the user asks to rearrange
           result = {{'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}}
           \"\"\"
 
-        Example — trend / degradation over time:
+        Example — time-series chart (strain vs force):
           code = \"\"\"
-          vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {{}}).get('Upper force limit') is not None]
-          x = np.arange(len(vals))
-          slope, _, _, p, _ = stats.linregress(x, vals)
-          result = {{'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}}
+          force = np.array(data[0]['values'])
+          strain = np.array(data[1]['values']) * 100  # ratio → %
+          n = min(len(force), len(strain))
+          step = max(1, n // 500)
+          result = [{{'strain': round(strain[i], 4), 'force': round(force[i], 2)}} for i in range(0, n, step)]
           \"\"\"
 
         IMPORTANT — When you have finished all data retrieval and analysis:
@@ -995,11 +1027,10 @@ You can reference existing widgets when answering. If the user asks to rearrange
         relevant `data_id` values. This signals that you are done and triggers the visualization step.
         Do NOT try to call `render_visualization`, `render_text_block`, `remove_widget`, or `reorder_dashboard` — those are handled
         automatically after you call `finish_analysis`.
-        Do NOT use `run_python_analysis` to prepare or reshape data for charts.
 
         You have a maximum of {MAX_AGENT_ITERATIONS} tool-call rounds. Use them efficiently:
-        1. Query the data you need (find/aggregate)
-        2. Run any statistical analysis (run_python_analysis)
+        1. Query the data you need (find/aggregate) — do NOT use $slice if you need full data later
+        2. Run analysis AND produce chart-ready flat records in run_python_analysis
         3. Call finish_analysis with your summary and data_ids
         """
 
