@@ -154,7 +154,6 @@ export function ChatInput({
                 className="h-8 w-8 rounded-xl relative"
                 title="Stop generating"
               >
-                <span className="absolute inset-0 rounded-xl border-2 border-transparent border-t-current animate-spin" />
                 <SquareIcon className="h-3 w-3 fill-current" />
               </Button>
             ) : (
