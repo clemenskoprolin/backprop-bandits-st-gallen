@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { SendIcon, SquareIcon, PaperclipIcon, FileTextIcon, XIcon } from 'lucide-react'
+import { SendIcon, SquareIcon, PaperclipIcon, FileTextIcon, XIcon, Loader2Icon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
