@@ -106,21 +106,80 @@ def _dump_invoke_context(node_name: str, messages: list):
 DB_CONTEXT = """
 ## Database Overview
 
-### Collections
-- `tests` — primary collection containing all material test records
+Database: `txp_clean`
+Collections: `_tests` (primary, ~31,099 documents), `unittables_new`, `valuecolumns_migrated`, `translations`
 
-### `tests` Schema
+### `_tests` Collection Schema
+
 Top-level fields:
-- `_id`: ObjectId
-- `state`: string — test outcome, e.g. `"finishedOK"`, `"finishedError"`
-- `timestamp`: datetime — when the test was recorded
-- `TestParametersFlat`: object — flattened key/value test parameters
-  - Field names are CASE-SENSITIVE and often SCREAMING_SNAKE_CASE
-  - Examples: `SPECIMEN_TYPE`, `CUSTOMER`, `Upper force limit`
-- `valuecolumns`: array — stores test results and measurements
-  - `_id`: string — UUID, sometimes ends with `_key` (ignore these)
-  - `valuetableId`: UUID — references the type of value stored
-  - `refId`: ObjectId — reference back to the source test `_id`
+- `_id`: String (UUID, e.g. `"{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}"`)
+- `clientAppType`: String (e.g. `"testXpert III"`)
+- `state`: String — test outcome, e.g. `"finishedOK"`, `"finishedError"`
+- `tags`: Array of Strings
+- `version`: String
+- `name`: String — specimen/test name (e.g. `"01"`, `"03"`)
+- `modifiedOn`: Document (empty object — not usable for date queries)
+- `hasMachineConfigurationInfo`: Boolean
+- `testProgramId`: String
+- `testProgramVersion`: String
+- `valueColumns`: Array of Documents — stores test results and measurements
+  - `unitTableId`: String
+  - `valueTableId`: String
+  - `_id`: String — UUID, entries ending with `_Key` were not migrated — ignore them
+  - `name`: String or Null
+  - `segments`: Array of Documents (`fromKey`, `label`, `source`, `toKey`)
+  - `sortIndex`: Number
+  - `isVisible`, `isActivatable`, `isActivationEditable`, `isValueEditable`, `markedAsEstimated`, `markedAsManipulated`: Boolean
+  - `tolerance`: Document (`target`, `upperLimit`, `lowerLimit`: Number)
+
+- `TestParametersFlat`: Document — flattened key/value test parameters (CASE-SENSITIVE field names):
+
+  **String fields:**
+  - `TYPE_OF_TESTING_STR` — e.g. `"tensile"`, `"compression"`, `"charpy"`
+  - `MACHINE_TYPE_STR` — e.g. `"Static"`
+  - `APPLICATION_ENGINEER`
+  - `CUSTOMER_NAME`
+  - `CUSTOMER` — e.g. `"Company_1"`
+  - `TESTER` — e.g. `"Tester_1"`
+  - `STANDARD` — e.g. `"DIN EN "`
+  - `LOAD_CELL`
+  - `NOTE`
+  - `COMMENT`
+  - `JOB_NO`
+  - `SPECIMEN_TYPE` — e.g. `"IPS"`
+  - `GRIPS`
+  - `JAWS`
+  - `GRIPS_SPECIFICATION`
+  - `TYPE_AND_DESTINATION`
+  - `MACHINE_DATA`
+  - `Headline for the report`
+  - `Designation of the sub-series`
+  - `Designation sub-series 1`
+  - `Designation sub-series 2`
+  - `Specimen designation`
+  - `Date` — format: `"DD.MM.YYYY"` (e.g. `"26.11.2021"`)
+  - `Clock time` — format: `"HH:MM:SS"` (e.g. `"09:42:38"`)
+  - `Date/Clock time` — ISO 8601 format: `"2021-11-26T09:42:38+01:00"` (USE THIS FOR DATE QUERIES)
+
+  **Numeric fields:**
+  - `Wall thickness`, `SPECIMEN_THICKNESS`, `SPECIMEN_WIDTH`
+  - `Diameter`, `Outer diameter`, `Inner diameter`, `Inner circumference`
+  - `Fineness`
+  - `Density of the specimen material`, `Weight of the specimen`
+  - `Total length of the specimen`, `Parallel specimen length`
+  - `Cross-section input`, `Cross-section correction factor`, `Negative cross-section correction value`
+  - `Marked initial gage length`, `Gage length, fine strain`
+  - `Mass per unit area of the specimen`
+  - `Grip to grip separation at the start position`
+  - `Force shutdown threshold`, `Upper force limit`, `Max. permissible force at end of test`
+  - `Maximum extension`
+  - `TEST_SPEED`, `Speed, Young's modulus`, `Speed, yield point`, `Speed, point of load removal`
+  - `TYPE_OF_TEST`, `Tube definition`, `Tube length`
+  - `Type of Young's modulus determination`, `Begin of Young's modulus determination`, `End of Young's modulus determination`
+  - `Young's modulus preset`
+  - `Travel preset x1%` through `Travel preset x6%`
+  - `Gage length after break`, `Diameter 1 after break`, `Diameter 2 after break`
+  - `Specimen thickness after break`, `Specimen width after break`, `Cross-section after break`
 
 ### UUID References
 - For **Results** (single value per valuecolumn): refer to `TestResultTypes`
@@ -128,11 +187,12 @@ Top-level fields:
 - `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
 
 ### Query Tips
-- Always use `get_sample_documents` first to verify exact field names before querying
+- The full schema is provided above. Go directly to `find` or `aggregate` — no need to discover the schema first.
+- For date-based queries, use `TestParametersFlat.Date/Clock time` (ISO 8601 string). You can use `$regex` or `$gte`/`$lte` string comparisons.
 - Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
 - Fields with spaces in their names are valid in MongoDB: e.g. `TestParametersFlat.Upper force limit`
 - An empty result from `find` may mean a wrong field name, not missing data
-- `valuecolumn._id` entries ending with `_key` were not migrated — ignore them
+- `valuecolumn._id` entries ending with `_Key` were not migrated — ignore them
 """
 
 # MCP Server Configuration - Streamable HTTP transport (Docker)
@@ -159,13 +219,6 @@ MCP_SERVERS = {
 # mcp_client: MultiServerMCPClient = None
 # mcp_tools: list = []
 
-
-@tool
-async def get_sample_documents() -> str:
-    """Returns sample documents from a collection as a string"""
-
-    results = await db.get_sample_documents()
-    return json.dumps(results, default=str)
 
 
 # Custom tool for Recharts-formatted aggregations (MCP's aggregate is generic)
@@ -484,9 +537,9 @@ tool_node = ToolNode(custom_tools + dashboard_tools)
 visualization_tool = ToolNode(dashboard_tools)
 submit_tool = ToolNode([submit_answer])
 
-#llm = ChatAnthropic(model="claude-sonnet-4-6")
+llm = ChatAnthropic(model="claude-sonnet-4-6")
 # llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
-llm = ChatOpenAI(model="gpt-5.4")
+# llm = ChatOpenAI(model="gpt-5.4")
 llm_with_tools = llm.bind_tools(custom_tools)
 llm_visualizer = llm.bind_tools(dashboard_tools)
 llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
@@ -799,31 +852,35 @@ You can reference existing widgets when answering. If the user asks to rearrange
         some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
 
         system_prompt = (
-            """You are an AI material testing assistant with MongoDB database access.
+            f"""You are an AI material testing assistant with MongoDB database access.
 
         {DB_CONTEXT}
+
+        IMPORTANT: The full schema for database `txp_clean` and collection `_tests` is provided above.
+        DO NOT call `list-databases` or `list-collections` — go directly to `find` or `aggregate`.
+        Use `collection-schema` only if you need to inspect a collection not documented above.
 
         AVAILABLE TOOLS:
 
         MongoDB (from MCP server):
         - `find` - Query documents with filters, projection, and sorting
         - `aggregate` - Run aggregation pipelines
-        - `collection-schema` - Understand collection structure
-        - `list-collections` - See available collections
         - `count` - Count matching documents
+        - `collection-schema` - Inspect collection structure (only needed for collections not documented above)
+        - `list-databases` / `list-collections` - Only needed for unusual requests outside the documented schema
 
         IMPORTANT — data_id and tool result format:
         Every tool result is returned as a JSON object with these fields:
         - `data_id` (UUID): Reference to the stored dataset. Pass this to `run_python_analysis` or
           `render_visualization` instead of copying data into `data_json`.
         - `info` (list of strings): Metadata/headers from the tool (e.g. "The aggregation resulted in 30 documents.").
-        - `result` (the actual data): The extracted query data as structured JSON (e.g. [{"name": "A", "count": 10}, ...]).
+        - `result` (the actual data): The extracted query data as structured JSON (e.g. [{{"name": "A", "count": 10}}, ...]).
 
         Example response:
-        { "data_id": "6da86", "info": ["Found 30 documents."], "result": [{"name": "Probe 1", "count": 937}] }
+        {{ "data_id": "6da86", "info": ["Found 30 documents."], "result": [{{"name": "Probe 1", "count": 937}}] }}
 
         If the data is too large, `result` is replaced by `summary` — a truncated preview:
-        { "data_id": "6da86", "info": ["Found 3505 documents."], "summary": [{"name": "Probe 1", "count": 937}, ..., "<TRUNCATED 3495 items>"] }
+        {{ "data_id": "6da86", "info": ["Found 3505 documents."], "summary": [{{"name": "Probe 1", "count": 937}}, ..., "<TRUNCATED 3495 items>"] }}
         Even when summarized, the full dataset is stored and accessible via `data_id`.
         Summaries truncate lists to 10 items, strings to 50 chars, and recurse into nested objects.
 
@@ -837,12 +894,12 @@ You can reference existing widgets when answering. If the user asks to rearrange
         - `render_visualization` - Display charts on the UI
             Accepts an optional `data_id`, but ONLY when the referenced data is already FLAT
             Recharts-compatible records (e.g. from an `aggregate` with `$project` that outputs
-            flat objects like [{"name": "A", "value": 10}]).
+            flat objects like [{{"name": "A", "value": 10}}]).
             Do NOT pass data_id from raw `find` results — those are nested and will break the chart.
             For nested data, either build data_json manually or use run_python_analysis to reshape first.
 
         Statistical Analysis workflow:
-        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data — note the `data_id` from each response
+        1. Use `find` or `aggregate` to retrieve raw data — note the `data_id` from each response
         2. Pass the `data_id` into `run_python_analysis` (or pass the raw JSON as `data_json`)
            For multi-dataset analysis (e.g. comparing two query results), pass multiple IDs via `data_ids`
            and access them in code as `datasets["<id>"]`
@@ -851,24 +908,24 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         Example — t-test between two groups:
           code = \"\"\"
-          group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
-          group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
+          group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {{}}).get('CUSTOMER') == 'Company_A']
+          group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {{}}).get('CUSTOMER') == 'Company_B']
           t, p = stats.ttest_ind(group_a, group_b)
-          result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
+          result = {{'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}}
           \"\"\"
 
         Example — trend / degradation over time:
           code = \"\"\"
-          vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
+          vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {{}}).get('Upper force limit') is not None]
           x = np.arange(len(vals))
           slope, _, _, p, _ = stats.linregress(x, vals)
-          result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
+          result = {{'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}}
           \"\"\"
         - `remove_widget` - Remove a widget from the dashboard by its ID
         - `reorder_dashboard` - Reorder widgets on the dashboard by providing widget IDs in desired order
 
         ALWAYS call `render_visualization` when showing aggregated or statistical data.
-        Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
+        Data format for render_visualization must be FLAT records: [{{"label": "A", "value1": 10, "value2": 20}}, ...]
         You can remove or reorder existing dashboard widgets when the user asks. Use the widget IDs from the CURRENT DASHBOARD STATE.
 
         Dashboard also supports text/headline widgets via render_text_block (handled in a later step).

@@ -31,14 +31,6 @@ client = motor.motor_asyncio.AsyncIOMotorClient(
 db = client["txp_clean"]
 collection = db["_tests"]
 
-async def get_sample_documents() -> List[Dict[str, Any]]:
-    limit = 2
-    cursor = collection.find({}, {"_id": 0}).limit(limit)
-    results = []
-    async for doc in cursor:
-        results.append(doc)
-    print(len(str(results)))
-    return results
 
 async def aggregate_for_recharts(group_by: str, aggregations: Dict[str, Any], match_filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
