@@ -181,13 +181,91 @@ Top-level fields:
   - `Gage length after break`, `Diameter 1 after break`, `Diameter 2 after break`
   - `Specimen thickness after break`, `Specimen width after break`, `Cross-section after break`
 
+### `valuecolumns_migrated` Collection (~5,911,220 documents) — Actual Measured Values
+
+This collection stores the **actual numeric values** (results and time-series data) for each test.
+The `_tests.valueColumns` array only defines WHAT measurements exist (names, IDs). The actual numbers are here.
+
+Fields:
+- `_id`: ObjectId (auto-generated)
+- `metadata.refId`: String UUID — **JOIN KEY to `_tests._id`**
+- `metadata.childId`: String — identifies which valueColumn this is (format: `{valueTableId}.{valueTableId}_Value`)
+- `metadata.rootVersion`: String
+- `values`: Array of Numbers — the actual measured data
+- `valuesCount`: Number — `1` means a single result value (e.g. tensile strength), `>1` means time-series/curve data
+- `uploadDate`: Date
+- `bufferLength`: Number
+- `filename`: String (URL-encoded, contains embedded UUIDs)
+- `fileId`: String
+
+Example document:
+```json
+{
+  "_id": ObjectId("69b04a19b67f896b62d4abcd"),
+  "metadata": {
+    "refId": "{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}",
+    "childId": "{76B288E7-874D-499f-977D-40D7B49A6027}-Zwick.Unittable.Force.{76B288E7-874D-499f-977D-40D7B49A6027}-Zwick.Unittable.Force_Value"
+  },
+  "values": [2133.35],
+  "valuesCount": 1
+}
+```
+
+### `unittables_new` Collection (126 documents) — Unit Definitions
+
+Maps unit table IDs to human-readable unit names.
+
+Fields:
+- `_id`: String UUID (e.g. `"{22DA0A5D-46AB-4d60-B44E-ECDFEF47F93E}"`)
+- `name.de`: String — human-readable name (e.g. `"DMS"`)
+- `units[]`: Array of `{ factor: Number, _id: String UUID, name: { de: String } }` (e.g. unit `"µm/m"`)
+
+### Cross-Collection Relationships
+
+**Join key:** `_tests._id` === `valuecolumns_migrated.metadata.refId` (one test → ~287 value column entries)
+
+**childId decoding:** `valuecolumns_migrated.metadata.childId` starts with the valueColumn's `_id` from `_tests.valueColumns[]._id`, followed by a dot.
+
+**Workflow to get actual values:**
+1. Find the test in `_tests`
+2. Identify the relevant `valueColumns[]._id` for the desired measurement (by name or unitTableId)
+3. Query `valuecolumns_migrated` filtering by `metadata.refId` = test `_id` AND `metadata.childId` matching the valueColumn
+
+### $lookup Example — Join _tests with valuecolumns_migrated (run on `_tests`):
+```json
+[
+  {"$match": {"TestParametersFlat.CUSTOMER": "Company_1", "state": "finishedOK"}},
+  {"$limit": 50},
+  {"$lookup": {
+    "from": "valuecolumns_migrated",
+    "localField": "_id",
+    "foreignField": "metadata.refId",
+    "pipeline": [
+      {"$match": {"valuesCount": 1}},
+      {"$project": {"metadata.childId": 1, "values": 1}}
+    ],
+    "as": "resultValues"
+  }},
+  {"$project": {"name": 1, "TestParametersFlat.CUSTOMER": 1, "resultValues": 1}}
+]
+```
+
+### Performance Rules for Cross-Collection Queries
+- `valuecolumns_migrated` has ~5.9M documents. NEVER scan it without filtering by `metadata.refId` first.
+- When using `$lookup` from `_tests` into `valuecolumns_migrated`, ALWAYS include a `pipeline` with a `$match` stage.
+- Always `$limit` `_tests` results BEFORE `$lookup` to avoid joining millions of rows.
+- For single result values, filter with `"valuesCount": 1`. For time-series/curves, filter with `"valuesCount": {"$gt": 1}`.
+- Prefer the two-step approach over `$lookup` when dealing with more than ~50 tests.
+- Use `$project` to keep only needed fields — `values` arrays can be very large for time-series data.
+
 ### UUID References
-- For **Results** (single value per valuecolumn): refer to `TestResultTypes`
-- For **Measurements** (time-series/channel data): refer to `channelParameterMap`
 - `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
+- The unitTableId in `_tests.valueColumns` (e.g. `"Zwick.Unittable.Force"`) indicates the measurement type
 
 ### Query Tips
 - The full schema is provided above. Go directly to `find` or `aggregate` — no need to discover the schema first.
+- When the user asks about actual measured values or test results, query `valuecolumns_migrated`. The `_tests` collection only has metadata about what measurements exist, not the actual numbers.
+- To get a specific value: find the test → identify the valueColumn → query `valuecolumns_migrated`
 - For date-based queries, use `TestParametersFlat.Date/Clock time` (ISO 8601 string). You can use `$regex` or `$gte`/`$lte` string comparisons.
 - Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
 - Fields with spaces in their names are valid in MongoDB: e.g. `TestParametersFlat.Upper force limit`
@@ -532,9 +610,9 @@ dashboard_tools = [
     remove_widget,
     reorder_dashboard,
 ]
-tool_node = ToolNode(custom_tools + dashboard_tools)
-visualization_tool = ToolNode(dashboard_tools)
-submit_tool = ToolNode([submit_answer])
+tool_node = ToolNode(custom_tools + dashboard_tools, handle_tool_errors=True)
+visualization_tool = ToolNode(dashboard_tools, handle_tool_errors=True)
+submit_tool = ToolNode([submit_answer], handle_tool_errors=True)
 
 llm = ChatAnthropic(model="claude-sonnet-4-6")
 # llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
@@ -561,7 +639,23 @@ async def init_mcp_client():
 
         # New API: get_tools() is async and handles connection internally
         mcp_tools = await mcp_client.get_tools()
-        allowed_set = set(["aggregate","collection-indexes", "collection-schema","collection-storage-size","count","db-stats","explain","find","list-collections","list-databases","mongodb-logs","list-knowledge-sources","search-knowledge"])
+        allowed_set = set(
+            [
+                "aggregate",
+                "collection-indexes",
+                "collection-schema",
+                "collection-storage-size",
+                "count",
+                "db-stats",
+                "explain",
+                "find",
+                "list-collections",
+                "list-databases",
+                "mongodb-logs",
+                "list-knowledge-sources",
+                "search-knowledge",
+            ]
+        )
         mcp_tools = await mcp_client.get_tools()
         mcp_tools = list(filter(lambda x: x.name in allowed_set, mcp_tools))
         print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
@@ -570,7 +664,7 @@ async def init_mcp_client():
 
         # Combine custom tools with MCP tools
         _all_tools = custom_tools + mcp_tools
-        tool_node = ToolNode(_all_tools)
+        tool_node = ToolNode(_all_tools, handle_tool_errors=True)
         llm_with_tools = llm.bind_tools(_all_tools)
 
         return mcp_tools
@@ -585,87 +679,14 @@ async def shutdown_mcp_client():
     mcp_client = None
 
 
-# system_prompt = """You are CoMat, an AI material testing assistant with MongoDB database access.
-
-# AVAILABLE TOOLS:
-
-# MongoDB (from MCP server):
-# - `find` - Query documents with filters, projection, and sorting
-# - `aggregate` - Run aggregation pipelines
-# - `collection-schema` - Understand collection structure
-# - `list-collections` - See available collections
-# - `count` - Count matching documents
-
-# Visualization:
-# - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-# - `render_visualization` - Display charts on the UI
-
-# Statistical Analysis:
-# - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data
-
-# WORKFLOW FOR STATISTICAL QUESTIONS:
-# 1. Use `find` or `aggregate` to retrieve raw data as a JSON list.
-# 2. Pass that JSON string directly into `run_python_analysis` as `data_json`.
-# 3. Write a Python snippet that assigns the final answer to `result`.
-# 4. Use the returned `result` to compose your natural-language answer.
-
-# Example — significance test between two groups:
-#   code = \"\"\"
-#   group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
-#   group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
-#   t, p = stats.ttest_ind(group_a, group_b)
-#   result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
-#   \"\"\"
-
-# Example — trend / degradation over time:
-#   code = \"\"\"
-#   vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
-#   x = np.arange(len(vals))
-#   slope, _, _, p, _ = stats.linregress(x, vals)
-#   result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
-#   \"\"\"
-
-# ALWAYS call `render_visualization` when showing aggregated or statistical data.
-# """
-
-# output_system_prompt = """You are a material testing AI assistant.
-
-# Based on the tool results and analysis above:
-# 1. Write a clear, concise answer to the user's question
-# 2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
-# """
-
-# intermediate_output_system_prompt = """briefly summarize the findings
-# """
-
-# self_critic_system_prompt = critic_system_prompt = """You are a critical reviewer of material testing analysis.
-
-# Review the previous conversation history and output ONLY a JSON object:
-# {
-#   "verdict": "accept|retry",
-#   "confidence": "high|medium|low",
-#   "text": "The verdict you made and why you made this verdict",
-#   "missing_data": "what tool should be called to improve the answer, or null",
-#   "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
-#   "tool_args": {...} or null,
-#   "caveats": ["caveat 1", "caveat 2"]
-# }
-
-# Verdict rules:
-# - accept: answer is well supported by data
-# - retry: answer needs more data, specify which tool to call
-# - escalate: query is too complex, needs deeper analysis
-# """
-
-# visualizer_system_prompt = """You are CoMat, an AI material testing assistant.
-# You should inspect if the previous results would benefit from a visualization. If you want to visualize
-# use the render_visualization function to visualize the data. If not, still call the function with none values."""
-
-
 def call_model(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
-        messages = [SystemMessage(content=system_prompt)] + messages
+        # Include DB_CONTEXT only on the first call; after MCP tool results
+        # are in the conversation the schema context is no longer needed.
+        has_tool_results = any(getattr(m, "type", None) == "tool" for m in messages)
+        prompt = system_prompt_no_db if has_tool_results else system_prompt
+        messages = [SystemMessage(content=prompt)] + messages
     metrics = _message_metrics(messages)
     logger.warning(
         "[context-debug] call_model payload: messages=%s total_chars=%s est_tokens=%s per_message_chars=%s",
@@ -795,6 +816,7 @@ def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
 memory = MemorySaver()
 
 system_prompt = ""
+system_prompt_no_db = ""
 output_system_prompt = ""
 visualizer_system_prompt = ""
 self_critic_system_prompt = ""
@@ -840,30 +862,20 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         be_professional = "Be very professional!"
 
-        global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
+        global system_prompt, system_prompt_no_db, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
 
-        uuid = """UUIDs
-        In many areas of the Data you will stumble upon UUIDs. We tried to migrate them as best we could, but on some places they are still integral.
-
-        Valuecolumns
-        this is the propably biggest source for UUIDs. The structure of a valucolumn entry, consist of two important metadatas: refId and childId
-
-        refId is a reference to the source test _id
-        childId is id constructed by the `[test.valuecolumns._id].[test.valuecolumn.valuetableId]
-        The UUIDs in childId is a reference to the type of value stored there. In the repository you will find files containing translations for these UUIDs, as well as the possible unittables.
-        for Results (valuecolumn has only a single value), take a look at the file TestResultTypes
-        for Measurements, take a look at the channelParameterMap
-        some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
-
-        system_prompt = (
-            f"""You are an AI material testing assistant with MongoDB database access.
-
+        db_context_block = f"""
         {DB_CONTEXT}
 
-        IMPORTANT: The full schema for database `txp_clean` and collection `_tests` is provided above.
+        IMPORTANT: The full schema for database `txp_clean` and its collections is provided above.
         DO NOT call `list-databases` or `list-collections` — go directly to `find` or `aggregate`.
         Use `collection-schema` only if you need to inspect a collection not documented above.
+        When the user asks about actual measured values or test results (not just test parameters),
+        you MUST query the `valuecolumns_migrated` collection — the `_tests` collection only contains
+        metadata about what measurements exist, not the actual numbers. See the DB_CONTEXT for $lookup examples.
+        """
 
+        tools_and_rest = f"""
         AVAILABLE TOOLS:
 
         MongoDB (from MCP server):
@@ -889,24 +901,18 @@ You can reference existing widgets when answering. If the user asks to rearrange
         Summaries truncate lists to 10 items, strings to 50 chars, and recurse into nested objects.
 
         Custom tools:
-        - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
+        - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis.
+            Only use this for ACTUAL COMPUTATION (statistics, trend analysis, outlier detection, transformations).
+            Do NOT use it just to copy or reformat data — that wastes time and tokens.
             Accepts either `data_json` (raw JSON string), `data_id` (single previous MongoDB result),
             or `data_ids` (list of data_ids from multiple previous MongoDB results).
             When using `data_ids`, all datasets are available in the `datasets` dict (keyed by data_id),
             and the first dataset is also set as `data`/`df` for convenience.
-            Works with any data shape — your Python code handles the structure.
-        - `render_visualization` - Display charts on the UI
-            Accepts an optional `data_id`, but ONLY when the referenced data is already FLAT
-            Recharts-compatible records (e.g. from an `aggregate` with `$project` that outputs
-            flat objects like [{{"name": "A", "value": 10}}]).
-            Do NOT pass data_id from raw `find` results — those are nested and will break the chart.
-            For nested data, either build data_json manually or use run_python_analysis to reshape first.
 
         Statistical Analysis workflow:
         1. Use `find` or `aggregate` to retrieve raw data — note the `data_id` from each response
-        2. Pass the `data_id` into `run_python_analysis` (or pass the raw JSON as `data_json`)
-           For multi-dataset analysis (e.g. comparing two query results), pass multiple IDs via `data_ids`
-           and access them in code as `datasets["<id>"]`
+        2. If statistical computation is needed, pass the `data_id` into `run_python_analysis`
+           For multi-dataset analysis, pass multiple IDs via `data_ids`
         3. Write a Python snippet that assigns the final answer to `result`
         4. Use the returned `result` to compose your natural-language answer
 
@@ -925,16 +931,26 @@ You can reference existing widgets when answering. If the user asks to rearrange
           slope, _, _, p, _ = stats.linregress(x, vals)
           result = {{'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}}
           \"\"\"
-        - `remove_widget` - Remove a widget from the dashboard by its ID
-        - `reorder_dashboard` - Reorder widgets on the dashboard by providing widget IDs in desired order
 
-        ALWAYS call `render_visualization` when showing aggregated or statistical data.
-        Data format for render_visualization must be FLAT records: [{{"label": "A", "value1": 10, "value2": 20}}, ...]
-        You can remove or reorder existing dashboard widgets when the user asks. Use the widget IDs from the CURRENT DASHBOARD STATE.
-
-        Dashboard also supports text/headline widgets via render_text_block (handled in a later step).
-        If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
+        IMPORTANT — Visualization is handled AUTOMATICALLY after you finish:
+        `render_visualization`, `render_text_block`, `remove_widget`, and `reorder_dashboard` are NOT available to you.
+        Do NOT try to call them. Do NOT use `run_python_analysis` to prepare or reshape data for charts.
+        When your data retrieval and analysis is complete, respond with a TEXT summary (no tool calls).
+        Include the relevant `data_id` values in your summary so the visualization step can use them directly.
         """
+
+        base_prompt = "You are an AI material testing assistant with MongoDB database access."
+
+        # Full prompt with DB_CONTEXT — used on first call_model invocation
+        system_prompt = (
+            base_prompt + db_context_block + tools_and_rest
+            + similar_data
+            + dashboard_context
+        )
+
+        # Lighter prompt without DB_CONTEXT — used after MCP tool results are in the conversation
+        system_prompt_no_db = (
+            base_prompt + tools_and_rest
             + similar_data
             + dashboard_context
         )
@@ -999,7 +1015,12 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
 
-        IMPORTANT: data_json must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
+        IMPORTANT: Prefer using `data_id` from previous tool results instead of manually copying data into `data_json`.
+        If a previous `aggregate` or `run_python_analysis` result already produced flat records, just pass its `data_id`
+        to `render_visualization` — no need to duplicate the data. Only use `data_json` when you need to manually
+        construct or modify the data.
+
+        data_json (when used) must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
         Example for bar/line/area: [{"material": "Steel A", "tensile_strength": 420, "yield_strength": 380}, ...]
         Example for pie: [{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]
         Example for boxplot: [{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}]
@@ -1167,8 +1188,35 @@ You can reference existing widgets when answering. If the user asks to rearrange
         global _active_tool_results
         # Keep module-level reference in sync so @tool functions can resolve data_ids
         _active_tool_results = self.tool_results
-        result = await tool_node.ainvoke(state)
+
+        try:
+            result = await tool_node.ainvoke(state)
+        except Exception as e:
+            # Safety net: if ToolNode didn't catch the error, build error
+            # ToolMessages manually so the LLM can see what went wrong and retry.
+            logger.error("Tool execution failed: %s", e, exc_info=True)
+            from langchain_core.messages import ToolMessage as _ToolMessage
+            error_messages = []
+            last_ai_msg = next(
+                (m for m in reversed(state["messages"])
+                 if hasattr(m, "tool_calls") and m.tool_calls),
+                None,
+            )
+            if last_ai_msg:
+                for tc in last_ai_msg.tool_calls:
+                    error_messages.append(_ToolMessage(
+                        content=f"Error executing tool: {e}",
+                        tool_call_id=tc["id"],
+                        name=tc["name"],
+                        status="error",
+                    ))
+            return {"messages": error_messages}
+
         for msg in result.get("messages", []):
+            # Skip post-processing for error messages from handle_tool_errors
+            if getattr(msg, "status", None) == "error":
+                continue
+
             tool_name = getattr(msg, "name", None)
             result_id = str(uuid.uuid4())
             # Parse content and extract actual data from MCP content blocks.

@@ -211,6 +211,13 @@ async def chat_stream(req: ChatRequest):
                         thinking.append(f"Used tool: {tool_name}")
                         yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
 
+                elif kind == "on_tool_error":
+                    tool_name = event.get("name", "unknown")
+                    logger.warning("Tool error for '%s': %s", tool_name, event.get("data", {}))
+                    yield _sse_event("thinking", {
+                        "step": f"Tool '{tool_name}' encountered an error, retrying with corrected parameters..."
+                    })
+
                 elif kind == "on_tool_end":
                     tool_name = event["name"]
 
