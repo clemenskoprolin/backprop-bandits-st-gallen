@@ -1334,6 +1334,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
     startPointerY: number
     startPx: number
     startPy: number
+    didSwap: boolean
+    lastSwappedWith: string | null  // prevent re-swapping with same widget on stale frames
   } | null>(null)
   const [dragVisual, setDragVisual] = useState<{ widgetId: string; px: number; py: number } | null>(null)
 
@@ -1415,6 +1417,8 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       startPointerY: e.clientY,
       startPx: px,
       startPy: py,
+      didSwap: false,
+      lastSwappedWith: null,
     }
     setDragVisual({ widgetId, px, py })
   }, [layoutMap])
@@ -1461,24 +1465,46 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
         const centerX = newPx + dw / 2
         const centerY = newPy + dh / 2
 
-        for (const other of widgets) {
-          if (other.id === drag.widgetId) continue
-          const ow = Math.min(other.layout.w, c)
-          const oh = other.layout.h ?? 1
-          const ox = toPixelX(Math.min(other.layout.x, c - ow))
-          const oy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
-          const owPx = itemWidth(ow)
-          const ohPx = getWidgetPixelHeight(other, oh)
-          if (centerX >= ox && centerX < ox + owPx && centerY >= oy && centerY < oy + ohPx) {
-            updateWidgetLayouts([
-              { id: drag.widgetId, layout: { ...dragged.layout, x: other.layout.x, y: other.layout.y } },
-              { id: other.id, layout: { ...other.layout, x: dragged.layout.x, y: dragged.layout.y } },
-            ])
-            drag.startPx = toPixelX(other.layout.x)
-            drag.startPy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
-            drag.startPointerX = e.clientX
-            drag.startPointerY = e.clientY
-            break
+        // Check if the center has left the last-swapped widget's bounds (allow re-swap if user drags away and back)
+        if (drag.lastSwappedWith) {
+          const prev = widgets.find((w) => w.id === drag.lastSwappedWith)
+          if (prev) {
+            const pw = Math.min(prev.layout.w, c)
+            const ph = prev.layout.h ?? 1
+            const ppx = toPixelX(Math.min(prev.layout.x, c - pw))
+            const ppy = pixelYFromRows(prev.layout.y, rowHeightsRef.current)
+            const ppw = itemWidth(pw)
+            const pph = getWidgetPixelHeight(prev, ph)
+            if (centerX < ppx || centerX >= ppx + ppw || centerY < ppy || centerY >= ppy + pph) {
+              drag.lastSwappedWith = null
+            }
+          } else {
+            drag.lastSwappedWith = null
+          }
+        }
+
+        if (!drag.lastSwappedWith) {
+          for (const other of widgets) {
+            if (other.id === drag.widgetId) continue
+            const ow = Math.min(other.layout.w, c)
+            const oh = other.layout.h ?? 1
+            const ox = toPixelX(Math.min(other.layout.x, c - ow))
+            const oy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
+            const owPx = itemWidth(ow)
+            const ohPx = getWidgetPixelHeight(other, oh)
+            if (centerX >= ox && centerX < ox + owPx && centerY >= oy && centerY < oy + ohPx) {
+              updateWidgetLayouts([
+                { id: drag.widgetId, layout: { ...dragged.layout, x: other.layout.x, y: other.layout.y } },
+                { id: other.id, layout: { ...other.layout, x: dragged.layout.x, y: dragged.layout.y } },
+              ])
+              drag.startPx = toPixelX(other.layout.x)
+              drag.startPy = pixelYFromRows(other.layout.y, rowHeightsRef.current)
+              drag.startPointerX = e.clientX
+              drag.startPointerY = e.clientY
+              drag.didSwap = true
+              drag.lastSwappedWith = other.id
+              break
+            }
           }
         }
       }
@@ -1536,18 +1562,23 @@ export function DashboardPanel({ onToggleChat, showChat }: DashboardPanelProps) 
       // ── Finish drag — snap to nearest empty cell or stay ──
       if (dragRef.current) {
         const drag = dragRef.current
-        const widgets = widgetsRef.current
-        const dragged = widgets.find((w) => w.id === drag.widgetId)
-        if (dragged) {
-          const c = colsRef.current
-          const finalPx = drag.startPx + (e.clientX - drag.startPointerX)
-          const finalPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
-          const w = Math.min(dragged.layout.w, c)
-          const targetX = Math.max(0, Math.min(c - w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
-          const targetY = Math.max(0, snapToRow(finalPy, rowHeightsRef.current))
-          const occupied = widgets.some((o) => o.id !== drag.widgetId && o.layout.x === targetX && o.layout.y === targetY)
-          if (!occupied) {
-            updateWidgetLayouts([{ id: drag.widgetId, layout: { ...dragged.layout, x: targetX, y: targetY } }])
+        // If a swap already happened during the drag, the widget is already
+        // in its correct position — skip the snap-to-grid placement to avoid
+        // overwriting the swap with stale layout data from widgetsRef.
+        if (!drag.didSwap) {
+          const widgets = widgetsRef.current
+          const dragged = widgets.find((w) => w.id === drag.widgetId)
+          if (dragged) {
+            const c = colsRef.current
+            const finalPx = drag.startPx + (e.clientX - drag.startPointerX)
+            const finalPy = Math.max(0, drag.startPy + (e.clientY - drag.startPointerY))
+            const w = Math.min(dragged.layout.w, c)
+            const targetX = Math.max(0, Math.min(c - w, Math.round(finalPx / (COLUMN_WIDTH + GRID_GAP))))
+            const targetY = Math.max(0, snapToRow(finalPy, rowHeightsRef.current))
+            const occupied = widgets.some((o) => o.id !== drag.widgetId && o.layout.x === targetX && o.layout.y === targetY)
+            if (!occupied) {
+              updateWidgetLayouts([{ id: drag.widgetId, layout: { ...dragged.layout, x: targetX, y: targetY } }])
+            }
           }
         }
         dragRef.current = null
