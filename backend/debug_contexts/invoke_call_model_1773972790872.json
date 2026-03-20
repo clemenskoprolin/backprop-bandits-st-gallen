@@ -1,0 +1,287 @@
+{
+  "node": "call_model",
+  "messages": [
+    {
+      "type": "SystemMessage",
+      "content": "You are an AI material testing assistant with MongoDB database access.\n\n\n## Database overview\n\nThree collections in MongoDB (all field names are CASE-SENSITIVE):\n\n| Collection               | Purpose                                        |\n|--------------------------|------------------------------------------------|\n| `_tests`                 | Primary test records — parameters + metadata  |\n| `valuecolumns_migrated`  | Time-series float arrays (one doc per channel) |\n| `unittables_new`         | Unit definitions referenced by value columns   |\n\n---\n\n## `_tests` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### TestParametersFlat — all keys present in sample document\n\nThese are the queryable measurement parameters. All key names are CASE-SENSITIVE.\n\n(could not fetch TestParametersFlat keys: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### valuecolumns array — item shape\n\nEach entry in the `valuecolumns` array has these fields:\n  _id          : string UUID  — ignore entries ending with `_key`\n  valuetableId : UUID         — resolves to a channel or result type (see UUID tables)\n  refId        : ObjectId     — back-reference to this test's _id\n  childId      : string       — composite: \"<valuecolumn._id>.<valuetableId>\"\n\n---\n\n## `valuecolumns_migrated` — field schema (live, from sample document)\n\nOne document per migrated channel per test. The `values` array is omitted here\n— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed.\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### JOIN PATTERN — fetching time-series data for a test\n\nStep 1: Query `_tests` for the test document.\n        Note: test._id (as string) and the valuecolumn entry where\n        valuetableId matches the channel UUID you need.\n\nStep 2: Query `valuecolumns_migrated`:\n        { \"refId\": \"<test._id as string>\",\n           \"childId\": { \"$regex\": \"<valuecolumn._id>\" } }\n\nStep 3: Read `.values[]` — raw float64 samples in chronological order.\n\nNote: `refId` is stored as a STRING in valuecolumns_migrated, not as ObjectId.\n\n---\n\n## `unittables_new` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n---\n\n## UUID reference tables\n\n`valuetableId` in `_tests.valuecolumns` resolves to either a measurement channel\n(time-series) or a result type (single scalar value).\n\nUse the `resolve_childId` tool at query time to look up any UUID you encounter.\nThe tables below are a static reference (first 40 entries each).\n\n### channelParameterMap — measurement channels (time-series)\n\n  (no channelParameterMap loaded)\n\n### TestResultTypes — scalar result types\n\n  (no TestResultTypes loaded)\n\n---\n\n## Query rules (follow strictly)\n\n1. Field names are CASE-SENSITIVE. `SPECIMEN_TYPE` ≠ `specimen_type`.\n   A wrong field name returns empty results silently — not an error.\n\n2. Use `resolve_childId` whenever you see a childId or valuetableId UUID.\n   Never guess the channel name from the UUID string.\n\n3. `valuecolumn._id` entries ending with `_key` were NOT migrated — skip them.\n\n4. `refId` in `valuecolumns_migrated` is a string. Match it as a string:\n   {\"refId\": \"{D1CB87C7-...}\"}  ← correct\n   {\"refId\": ObjectId(\"...\")}      ← wrong\n\n5. Fields with spaces are valid: `TestParametersFlat.Upper force limit`\n\n6. Never load the full `values` array unless you specifically need the\n   time-series data. Use `valuesCount` to check length first.\n\n\nAVAILABLE TOOLS:\n\nMongoDB (from MCP server):\n- `find`              — Query documents with filters, projection, and sorting\n- `aggregate`         — Run aggregation pipelines\n- `collection-schema` — Understand collection structure\n- `list-collections`  — See available collections\n- `count`             — Count matching documents\n\nUUID resolution:\n- `resolve_childId`   — Resolve any childId or valuetableId UUID to its human-readable name\n  Always call this before referencing a channel or result type by UUID.\n\nIMPORTANT — data_id and tool result format:\nEvery tool result is returned as a JSON object:\n  { \"data_id\": \"<uuid>\", \"info\": [\"Found N documents.\"], \"result\": [...] }\nIf the payload exceeds the context limit, `result` is replaced by `summary` (truncated preview)\nbut the full dataset remains accessible via `data_id`.\n\nCustom tools:\n- `run_python_analysis` — Execute Python (numpy/pandas/scipy) on retrieved data.\n    Accepts `data_json`, `data_id`, or `data_ids` (list).\n    Assign your final answer to `result`.\n- `render_visualization` — Display charts on the UI.\n    data_json must be FLAT records: [{\"label\": \"A\", \"value1\": 10}].\n    Use `data_id` only for already-flat aggregate results.\n- `render_text_block`    — Pin a Markdown summary to the dashboard.\n- `remove_widget`        — Remove a dashboard widget by id.\n- `reorder_dashboard`    — Reorder widgets by providing ids in desired order.\n\nStatistical Analysis workflow:\n1. Use `find` or `aggregate` to retrieve raw data — note the `data_id`.\n2. Pass `data_id` into `run_python_analysis` (or use `data_json` for small payloads).\n3. For multi-dataset analysis pass multiple ids via `data_ids`; access each as `datasets[\"<id>\"]`.\n4. Assign answer to `result`, then compose your natural-language response.\n\nALWAYS call `render_visualization` when showing aggregated or statistical data.\nYou are given the following similar text from a vectordb: \n\n\nCURRENT DASHBOARD STATE:\nThe user currently has 2 widget(s) on their dashboard:\n- Widget 'Tensile Tests by Standard — Company_1' (id: widget_msg_1773972669347, type: bar, position: x=0 y=0 w=2 h=2)\n  Selected data points: [{\"Standard\": \"DIN 53504\", \"Count\": 21}]\n- Widget 'Tensile Tests by Tester — Company_1' (id: widget_msg_1773972669347_viz2, type: pie, position: x=0 y=2 w=1 h=1)\n\nYou can reference existing widgets when answering. If the user asks to rearrange or reorganize the dashboard, you can create new visualizations that replace or complement existing ones.\n"
+    },
+    {
+      "type": "HumanMessage",
+      "content": "Show me all tensile tests we have done for customer Company_1"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "I'll start by exploring the database structure to find the relevant fields for filtering by customer and test type.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01AD6x75sm43iuicys3Ayc5p",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"db87800d-1092-4e4f-96fc-30252372615b\", \"info\": [\"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\"], \"result\": [{\"type\": \"text\", \"text\": \"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\", \"id\": \"lc_4552ac7b-df6c-455d-af66-85dac1e92609\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_018U5f1K78CaT2PAbxuVAmGN",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "list-databases",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": ""
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"3a7fdcb1-600f-42bb-9a72-e6fe30920d2f\", \"info\": [\"Found 4 databases:\"], \"result\": [{\"name\": \"admin\", \"size\": 102400}, {\"name\": \"config\", \"size\": 118784}, {\"name\": \"local\", \"size\": 65536}, {\"name\": \"txp_clean\", \"size\": 45033590784}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_0143ZiqTBvMANZaZct84Vukv",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "list-collections",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"database\": \"txp_clean\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"b67dfcc8-9ccd-4547-8709-3b3bcdeb067e\", \"info\": [\"Found 4 collections for database \\\"txp_clean\\\".\"], \"result\": [{\"name\": \"_tests\"}, {\"name\": \"unittables_new\"}, {\"name\": \"valuecolumns_migrated\"}, {\"name\": \"translations\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01DLgw7Zp6z3aGExATPU9tNg",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"3790967a-a466-4780-8617-08c5808e8969\", \"info\": [\"Found 12 fields in the schema for \\\"txp_clean._tests\\\". Note that this schema is inferred from a sample and may not represent the full schema of the collection.\"], \"result\": {\"_id\": {\"types\": [{\"bsonType\": \"String\"}]}, \"clientAppType\": {\"types\": [{\"bsonType\": \"String\"}]}, \"state\": {\"types\": [{\"bsonType\": \"String\"}]}, \"tags\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"String\"}]}]}, \"version\": {\"types\": [{\"bsonType\": \"String\"}]}, \"valueColumns\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"Document\", \"fields\": {\"unitTableId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"valueTableId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"_id\": {\"types\": [{\"bsonType\": \"String\"}]}, \"name\": {\"types\": [{\"bsonType\": \"Null\"}, {\"bsonType\": \"String\"}]}, \"modifiedOn\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {}}]}, \"segments\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"Document\", \"fields\": {\"fromKey\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"label\": {\"types\": [{\"bsonType\": \"String\"}]}, \"source\": {\"types\": [{\"bsonType\": \"String\"}]}, \"toKey\": {\"types\": [{\"bsonType\": \"Number\"}]}}}]}]}, \"isActivationEditable\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"isValueEditable\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"markedAsEstimated\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"markedAsManipulated\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"picture\": {\"types\": [{\"bsonType\": \"String\"}]}, \"sortIndex\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"tolerance\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {\"target\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"upperLimit\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"lowerLimit\": {\"types\": [{\"bsonType\": \"Number\"}]}}}]}, \"isVisible\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"isActive\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"isUnitEditable\": {\"types\": [{\"bsonType\": \"Boolean\"}]}}}]}]}, \"hasMachineConfigurationInfo\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"testProgramId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"testProgramVersion\": {\"types\": [{\"bsonType\": \"String\"}]}, \"name\": {\"types\": [{\"bsonType\": \"String\"}]}, \"modifiedOn\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {}}]}, \"TestParametersFlat\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {\"TYPE_OF_TESTING_STR\": {\"types\": [{\"bsonType\": \"String\"}]}, \"MACHINE_TYPE_STR\": {\"types\": [{\"bsonType\": \"String\"}]}, \"APPLICATION_ENGINEER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"CUSTOMER_NAME\": {\"types\": [{\"bsonType\": \"String\"}]}, \"LOAD_CELL\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Wall thickness\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"SPECIMEN_THICKNESS\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"SPECIMEN_WIDTH\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Outer diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Inner diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Fineness\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Density of the specimen material\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Weight of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Total length of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Tube length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section input\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Parallel specimen length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"TYPE_OF_TEST\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Grip to grip separation at the start position\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Force shutdown threshold\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Upper force limit\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Maximum extension\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Gage length, fine strain\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, point of load removal\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"TEST_SPEED\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Max. permissible force at end of test\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Tube definition\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Negative cross-section correction value\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section correction factor\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"CUSTOMER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"TESTER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Headline for the report\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Designation sub-series 1\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Clock time\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Date\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Date/Clock time\": {\"types\": [{\"bsonType\": \"String\"}]}, \"NOTE\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Series designation\": {\"types\": [{\"bsonType\": \"String\"}]}, \"JOB_NO\": {\"types\": [{\"bsonType\": \"String\"}]}, \"TYPE_AND_DESTINATION\": {\"types\": [{\"bsonType\": \"String\"}]}, \"MACHINE_DATA\": {\"types\": [{\"bsonType\": \"String\"}]}, \"GRIPS\": {\"types\": [{\"bsonType\": \"String\"}]}, \"GRIPS_SPECIFICATION\": {\"types\": [{\"bsonType\": \"String\"}]}, \"JAWS\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Type of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Begin of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"End of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, Young's modulus\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x1%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x2%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Young's modulus preset\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"STANDARD\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Travel preset x3%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x4%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x5%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x6%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Marked initial gage length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, yield point\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Specimen designation\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Gage length after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Specimen width after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Specimen thickness after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter 1 after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter 2 after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"MATERIAL_P\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Designation of the sub-series\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Inner circumference\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Mass per unit area of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Designation sub-series 2\": {\"types\": [{\"bsonType\": \"String\"}]}, \"COMMENT\": {\"types\": [{\"bsonType\": \"String\"}]}}}]}}}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "I can see the schema. The relevant fields are `TestParametersFlat.CUSTOMER_NAME` and `TestParametersFlat.TYPE_OF_TESTING_STR`. Let me query for tensile tests for Company_1.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01NmCxYuLMPFbBAfionsLEFc",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.CUSTOMER_NAME\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":{\"$regex\":\"tensile\",\"$options\":\"i\"}}, \"projection\": {\"_id\":1,\"name\":1,\"TestParametersFlat.CUSTOMER_NAME\":1,\"TestParametersFlat.TYPE_OF_TESTING_STR\":1,\"TestParametersFlat.STANDARD\":1,\"TestParametersFlat.MATERIAL_P\":1,\"TestParametersFlat.SPECIMEN_WIDTH\":1,\"TestParametersFlat.SPECIMEN_THICKNESS\":1,\"TestParametersFlat.TEST_SPEED\":1,\"TestParametersFlat.JOB_NO\":1,\"TestParametersFlat.TESTER\":1,\"TestParametersFlat.Date\":1,\"TestParametersFlat.NOTE\":1}, \"limit\": 100}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"6c2b81dc-33e3-4b38-b06b-429d9a0b04b0\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 1118 documents. Returning 100 documents.\"], \"summary\": [{\"_id\": \"{A9F3D82D-B4F4-4d3c-BFEB-C36CDA84110A}\", \"name\": \"Probe 1.4\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.001, \"SPECIMEN_WIDTH\": 0.05, \"TEST_SPEED\": 0.0008333333333333, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN 1372\", \"Date\": \"26.02.2025\"}}, {\"_id\": \"{1153B45F-8658-4681-9C59-E5939B9CE421}\", \"name\": \"Probe 1.3\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.001, \"SPECIMEN_WIDTH\": 0.05, \"TEST_SPEED\": 0.0008333333333333, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN 1372\", \"Date\": \"26.02.2025\"}}, {\"_id\": \"{F04F66CC-CF3A-43fa-B273-00DE9338255D}\", \"name\": \"A\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.000957, \"SPECIMEN_WIDTH\": 0.01965, \"TEST_SPEED\": 0.0007705, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN ISO 6892-1\", \"Date\": \"16.01.2026\"}}, {\"_id\": \"{587400B1-60DE-43c5-9AB1-0AAD74928373}\", \"name\": \"L\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.000957, \"SPECIMEN_WIDTH\": 0.01965, \"TEST_SPEED\": 0.0007705, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN ISO 6892-1\", \"Date\": \"16.01.2026\"}}, {\"_id\": \"{FE6059EE-076A-414c-9F66-C055D1BBCBEE}\", \"name\": \"Probe 1.5\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.001, \"SPECIMEN_WIDTH\": 0.05, \"TEST_SPEED\": 0.0008333333333333, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN 1372\", \"Date\": \"26.02.2025\"}}, {\"_id\": \"{7703C98A-8E0D-4eb5-BACB-79AAC0937B38}\", \"name\": \"Probe 1.1\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.001, \"SPECIMEN_WIDTH\": 0.05, \"TEST_SPEED\": 0.0008333333333333, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN 1372\", \"Date\": \"26.02.2025\"}}, {\"_id\": \"{BEB262C1-5019-4694-A776-A6D6734E13D3}\", \"name\": \"Probe 1.2\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"CUSTOMER_NAME\": \"Company_1\", \"SPECIMEN_THICKNESS\": 0.001, \"SPECIMEN_WIDTH\": 0.05, \"TEST_SPEED\": 0.0008333333333333, \"TESTER\": \"Tester_2\", \"STANDARD\": \"DIN EN 1372\", \"Date\": \"26.02.2025\"}}, {\"_id\": \"{695983AA-E5EE-4bf4-A723-F417D7407DAC}\", \"name\": \"Probe 1.1\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"JOB_NO\": \"livedemo 07-02-24 ZRU\", \"STANDARD\": \"DIN EN ISO 6892-1\", \"TESTER\": \"Tester_3\", \"NOTE\": \"L0 20 mm\", \"SPECIMEN_THICKNESS\": 0.000957, \"SPECIMEN_WIDTH\": 0.01965, \"TEST_SPEED\": 0.0007705, \"CUSTOMER_NAME\": \"Company_1\", \"Date\": \"06.02.2024\"}}, {\"_id\": \"{AE69B00D-19E4-4a6b-AA9C-4E7C08BD5515}\", \"name\": \"Probe 1.2\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"JOB_NO\": \"livedemo 07-02-24 ZRU\", \"STANDARD\": \"DIN EN ISO 6892-1\", \"TESTER\": \"Tester_3\", \"NOTE\": \"L0 20 mm\", \"SPECIMEN_THICKNESS\": 0.000957, \"SPECIMEN_WIDTH\": 0.01965, \"TEST_SPEED\": 0.0007705, \"CUSTOMER_NAME\": \"Company_1\", \"Date\": \"07.02.2024\"}}, {\"_id\": \"{F46B52A0-3527-4b46-AA6D-3AF70022C6A4}\", \"name\": \"Probe 1.3\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"JOB_NO\": \"livedemo 07-02-24 ZRU\", \"STANDARD\": \"DIN EN ISO 6892-1\", \"TESTER\": \"Tester_3\", \"NOTE\": \"L0 20 mm\", \"SPECIMEN_THICKNESS\": 0.000957, \"SPECIMEN_WIDTH\": 0.01965, \"TEST_SPEED\": 0.0007705, \"CUSTOMER_NAME\": \"Company_1\", \"Date\": \"07.02.2024\"}}, \"<TRUNCATED 90 items>\"]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "There are **1,118 tensile tests** for Company_1. Let me get a full statistical summary across all of them.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01Mu66wYd2mN4r61r3cAzLdt",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "aggregate",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"pipeline\": [{\"$match\":{\"TestParametersFlat.CUSTOMER_NAME\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":{\"$regex\":\"tensile\",\"$options\":\"i\"}}},{\"$group\":{\"_id\":{\"standard\":\"$TestParametersFlat.STANDARD\",\"tester\":\"$TestParametersFlat.TESTER\"},\"count\":{\"$sum\":1},\"earliest_date\":{\"$min\":\"$TestParametersFlat.Date\"},\"latest_date\":{\"$max\":\"$TestParametersFlat.Date\"},\"avg_speed\":{\"$avg\":\"$TestParametersFlat.TEST_SPEED\"},\"avg_width\":{\"$avg\":\"$TestParametersFlat.SPECIMEN_WIDTH\"},\"avg_thickness\":{\"$avg\":\"$TestParametersFlat.SPECIMEN_THICKNESS\"}}},{\"$sort\":{\"count\":-1}}]}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"fc228394-6a2d-4a66-837a-039721aab018\", \"info\": [\"The aggregation resulted in 36 documents.\"], \"result\": [{\"_id\": {\"tester\": \"Tester_2\"}, \"count\": 346, \"earliest_date\": \"01.03.2024\", \"latest_date\": \"29.08.2025\", \"avg_speed\": 0.000654075957585479, \"avg_width\": 0.007667849710982659, \"avg_thickness\": 0.0022636464354527947}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1\", \"tester\": \"Tester_2\"}, \"count\": 174, \"earliest_date\": \"04.04.2024\", \"latest_date\": \"31.01.2025\", \"avg_speed\": 0.0007270114942528736, \"avg_width\": 0.018178176245210727, \"avg_thickness\": 0.0019959655172413792}, {\"_id\": {\"standard\": \"DIN EN ISO 527-1\", \"tester\": \"Tester_2\"}, \"count\": 119, \"earliest_date\": \"02.07.2024\", \"latest_date\": \"30.08.2024\", \"avg_speed\": 0.001807773109243673, \"avg_width\": 0.009681050420168067, \"avg_thickness\": 0.002571403361344538}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\", \"tester\": \"Tester_2\"}, \"count\": 106, \"earliest_date\": \"03.04.2024\", \"latest_date\": \"24.10.2025\", \"avg_speed\": 0.0007874245283018868, \"avg_width\": 0.020277028301886792, \"avg_thickness\": 0.0014706415094339622}, {\"_id\": {\"standard\": \"ISO 179-1\", \"tester\": \"Tester_2\"}, \"count\": 60, \"earliest_date\": \"01.07.2024\", \"latest_date\": \"28.03.2025\", \"avg_speed\": null, \"avg_width\": 0.003999183333333333, \"avg_thickness\": 0.010028833333333332}, {\"_id\": {\"standard\": \"DIN EN 29073-3\", \"tester\": \"Tester_92\"}, \"count\": 42, \"earliest_date\": \"26.01.2024\", \"latest_date\": \"31.01.2024\", \"avg_speed\": 0.0016666666666667, \"avg_width\": 0.04285714285714286, \"avg_thickness\": 0.001}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1\", \"tester\": \"Tester_94\"}, \"count\": 33, \"earliest_date\": \"15.01.2024\", \"latest_date\": \"22.01.2024\", \"avg_speed\": 0.0007705, \"avg_width\": 0.01965, \"avg_thickness\": 0.000957}, {\"_id\": {\"standard\": \"DIN 53504\", \"tester\": \"Tester_2\"}, \"count\": 21, \"earliest_date\": \"01.07.2025\", \"latest_date\": \"27.02.2024\", \"avg_speed\": 0.003650793650793624, \"avg_width\": 0.004, \"avg_thickness\": 0.0020244285714285716}, {\"_id\": {\"standard\": \"ASTM D 5034\", \"tester\": \"Tester_2\"}, \"count\": 20, \"earliest_date\": \"26.03.2024\", \"latest_date\": \"26.03.2024\", \"avg_speed\": 0.005, \"avg_width\": 0.05, \"avg_thickness\": 0.001}, {\"_id\": {\"standard\": \"ISO 37\", \"tester\": \"Tester_2\"}, \"count\": 16, \"earliest_date\": \"01.07.2024\", \"latest_date\": \"21.10.2025\", \"avg_speed\": 0.00916666666666665, \"avg_width\": 0.0049625, \"avg_thickness\": 0.0015500625}, {\"_id\": {\"standard\": \"prEN ISO 6892-1 (Anhang G)\", \"tester\": \"Tester_2\"}, \"count\": 15, \"earliest_date\": \"17.10.2024\", \"latest_date\": \"29.10.2025\", \"avg_speed\": 1.29777777778e-05, \"avg_width\": 0.01801602222222222, \"avg_thickness\": 0.0016415333333333268}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1\", \"tester\": \"Tester_3\"}, \"count\": 15, \"earliest_date\": \"06.02.2024\", \"latest_date\": \"07.02.2024\", \"avg_speed\": 0.0007705, \"avg_width\": 0.014886666666666666, \"avg_thickness\": 0.004659066666666667}, {\"_id\": {\"standard\": \"ASTM D5528/D5528M-21\", \"tester\": \"Tester_2\"}, \"count\": 15, \"earliest_date\": \"03.04.2025\", \"latest_date\": \"29.08.2024\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.025123333333333334, \"avg_thickness\": 0.0032166666666666667}, {\"_id\": {\"standard\": \"ISO 8256\", \"tester\": \"Tester_2\"}, \"count\": 15, \"earliest_date\": \"17.10.2024\", \"latest_date\": \"29.10.2024\", \"avg_speed\": null, \"avg_width\": 0.0003799333333333333, \"avg_thickness\": 0.003}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\", \"tester\": \"Tester_72\"}, \"count\": 14, \"earliest_date\": \"16.01.2024\", \"latest_date\": \"16.01.2024\", \"avg_speed\": 0.0007705, \"avg_width\": 0.02070857142857143, \"avg_thickness\": 0.0011115714285714429}, {\"_id\": {\"standard\": \"Zugversuch\", \"tester\": \"Tester_29\"}, \"count\": 12, \"earliest_date\": \"14.11.2024\", \"latest_date\": \"14.11.2024\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.01, \"avg_thickness\": 0.004}, {\"_id\": {\"standard\": \"ASTM E 8/E8M\", \"tester\": \"Tester_167\"}, \"count\": 12, \"earliest_date\": \"13.02.2024\", \"latest_date\": \"14.02.2024\", \"avg_speed\": 0.0009583333333333001, \"avg_width\": 0.005907444444444442, \"avg_thickness\": 0.001571777777777775}, {\"_id\": {\"standard\": \"ASTM D 7269/D 7269 M\", \"tester\": \"Tester_2\"}, \"count\": 11, \"earliest_date\": \"6/6/2024\", \"latest_date\": \"6/6/2024\", \"avg_speed\": 0.0016666666666667002, \"avg_width\": 0.05, \"avg_thickness\": 0.0001}, {\"_id\": {\"standard\": \"DIN EN 1465\", \"tester\": \"Tester_117\"}, \"count\": 10, \"earliest_date\": \"09.02.2024\", \"latest_date\": \"12.02.2024\", \"avg_speed\": 1.66666666667e-05, \"avg_width\": 0.0225, \"avg_thickness\": 0.0125}, {\"_id\": {\"standard\": \"DIN EN ISO 14129\", \"tester\": \"Tester_2\"}, \"count\": 8, \"earliest_date\": \"10.10.2024\", \"latest_date\": \"15.10.2024\", \"avg_speed\": 3.33333333333e-05, \"avg_width\": 0.0249675, \"avg_thickness\": 0.00265875}, {\"_id\": {\"standard\": \"ASTM D 256\", \"tester\": \"Tester_2\"}, \"count\": 6, \"earliest_date\": \"04.09.2024\", \"latest_date\": \"04.09.2024\", \"avg_speed\": null, \"avg_width\": 0.006349999999999999, \"avg_thickness\": 0.012699999999999998}, {\"_id\": {\"standard\": \"ASTM D 638\", \"tester\": \"Tester_2\"}, \"count\": 6, \"earliest_date\": \"16.07.2024\", \"latest_date\": \"24.10.2024\", \"avg_speed\": 0.0007083333333333, \"avg_width\": 0.012946, \"avg_thickness\": 0.0030973333333333334}, {\"_id\": {\"standard\": \"Pr\\u00fcfung mit freier Versuchsdefinition und Ergebniseditor\", \"tester\": \"Tester_2\"}, \"count\": 6, \"earliest_date\": \"12.02.2025\", \"latest_date\": \"30.04.2024\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.001, \"avg_thickness\": 0.001}, {\"_id\": {\"standard\": \"DIN EN 1372\", \"tester\": \"Tester_2\"}, \"count\": 5, \"earliest_date\": \"26.02.2025\", \"latest_date\": \"26.02.2025\", \"avg_speed\": 0.0008333333333333, \"avg_width\": 0.05, \"avg_thickness\": 0.001}, {\"_id\": {\"standard\": \"DIN EN ISO 2062\", \"tester\": \"Tester_94\"}, \"count\": 5, \"earliest_date\": \"18.01.2024\", \"latest_date\": \"18.01.2024\", \"avg_speed\": 0.0041666666666667, \"avg_width\": 0.05, \"avg_thickness\": 0.0001}, {\"_id\": {\"standard\": \"DIN EN 320\", \"tester\": \"Tester_2\"}, \"count\": 4, \"earliest_date\": \"18.06.2024\", \"latest_date\": \"18.06.2024\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.001, \"avg_thickness\": 0.01}, {\"_id\": {\"standard\": \"Simple tensile test for Fmax\", \"tester\": \"Tester_28\"}, \"count\": 4, \"earliest_date\": \"10.01.2024\", \"latest_date\": \"10.01.2024\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.01, \"avg_thickness\": 0.004}, {\"_id\": {\"standard\": \"ASTM E 8/E8M\", \"tester\": \"Tester_2\"}, \"count\": 3, \"earliest_date\": \"05.03.2025\", \"latest_date\": \"05.03.2025\", \"avg_speed\": 0.0009583333333333001, \"avg_width\": 0.012699999999999998, \"avg_thickness\": 0.000762}, {\"_id\": {\"standard\": \"ASTM D 3039\", \"tester\": \"Tester_2\"}, \"count\": 3, \"earliest_date\": \"28.02.2025\", \"latest_date\": \"28.02.2025\", \"avg_speed\": 3.83333333333e-05, \"avg_width\": 0.015053333333333333, \"avg_thickness\": 0.0011033333333333333}, {\"_id\": {\"standard\": \"DIN EN ISO 527-4\", \"tester\": \"Tester_2\"}, \"count\": 3, \"earliest_date\": \"02.06.2025\", \"latest_date\": \"10.12.2025\", \"avg_speed\": 3.33333333333e-05, \"avg_width\": 0.013359999999999999, \"avg_thickness\": 0.0020466666666666667}, {\"_id\": {\"standard\": \"ASTM D 7078\", \"tester\": \"Tester_2\"}, \"count\": 2, \"earliest_date\": \"23.04.2024\", \"latest_date\": \"23.04.2024\", \"avg_speed\": 3.33333333333e-05, \"avg_width\": 0.03093, \"avg_thickness\": 0.002601}, {\"_id\": {\"standard\": \"DIN EN ISO 527-5\", \"tester\": \"Tester_2\"}, \"count\": 2, \"earliest_date\": \"08.03.2024\", \"latest_date\": \"08.03.2024\", \"avg_speed\": 3.33333333333e-05, \"avg_width\": 0.01509, \"avg_thickness\": 0.00106}, {\"_id\": {\"standard\": \"DIN EN ISO 6892-1\", \"tester\": \"Tester_69\"}, \"count\": 2, \"earliest_date\": \"17.10.2024\", \"latest_date\": \"17.10.2024\", \"avg_speed\": 0.0007705, \"avg_width\": 0.01965, \"avg_thickness\": 0.000957}, {\"_id\": {\"standard\": \"DIN EN 29073-3\", \"tester\": \"Tester_2\"}, \"count\": 1, \"earliest_date\": \"19.09.2024\", \"latest_date\": \"19.09.2024\", \"avg_speed\": 0.0016666666666667, \"avg_width\": 0.05, \"avg_thickness\": 0.001}, {\"_id\": {\"standard\": \"ISO 25217\", \"tester\": \"Tester_2\"}, \"count\": 1, \"earliest_date\": \"27.03.2025\", \"latest_date\": \"27.03.2025\", \"avg_speed\": 0.0001666666666667, \"avg_width\": 0.01, \"avg_thickness\": 0.02}, {\"_id\": {\"standard\": \"DIN EN 1939\", \"tester\": \"Tester_2\"}, \"count\": 1, \"earliest_date\": \"20.03.2025\", \"latest_date\": \"20.03.2025\", \"avg_speed\": 0.005, \"avg_width\": 0.024, \"avg_thickness\": 0.001}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "Now let me also get a breakdown by year and standard for visualization:",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_014S1u9eqZt8sMWGntm9GgyJ",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "aggregate",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"pipeline\": [{\"$match\":{\"TestParametersFlat.CUSTOMER_NAME\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":{\"$regex\":\"tensile\",\"$options\":\"i\"}}},{\"$group\":{\"_id\":\"$TestParametersFlat.STANDARD\",\"count\":{\"$sum\":1}}},{\"$sort\":{\"count\":-1}},{\"$limit\":15}]}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"90ca90a4-7b36-4cda-aa02-6f1dc7d0039d\", \"info\": [\"The aggregation resulted in 15 documents.\"], \"result\": [{\"_id\": null, \"count\": 346}, {\"_id\": \"DIN EN ISO 6892-1\", \"count\": 224}, {\"_id\": \"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\", \"count\": 120}, {\"_id\": \"DIN EN ISO 527-1\", \"count\": 119}, {\"_id\": \"ISO 179-1\", \"count\": 60}, {\"_id\": \"DIN EN 29073-3\", \"count\": 43}, {\"_id\": \"DIN 53504\", \"count\": 21}, {\"_id\": \"ASTM D 5034\", \"count\": 20}, {\"_id\": \"ISO 37\", \"count\": 16}, {\"_id\": \"prEN ISO 6892-1 (Anhang G)\", \"count\": 15}, {\"_id\": \"ISO 8256\", \"count\": 15}, {\"_id\": \"ASTM D5528/D5528M-21\", \"count\": 15}, {\"_id\": \"ASTM E 8/E8M\", \"count\": 15}, {\"_id\": \"Zugversuch\", \"count\": 12}, {\"_id\": \"ASTM D 7269/D 7269 M\", \"count\": 11}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01URktcnvAL2wk3snHnjQGws",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "run_python_analysis",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"code\": \"\\n# Prepare clean data for visualization\\nstandards_data = [\\n    {\\\"Standard\\\": \\\"_No Standard\\\", \\\"Count\\\": 346},\\n    {\\\"Standard\\\": \\\"DIN EN ISO 6892-1\\\", \\\"Count\\\": 224},\\n    {\\\"Standard\\\": \\\"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\\\", \\\"Count\\\": 120},\\n    {\\\"Standard\\\": \\\"DIN EN ISO 527-1\\\", \\\"Count\\\": 119},\\n    {\\\"Standard\\\": \\\"ISO 179-1\\\", \\\"Count\\\": 60},\\n    {\\\"Standard\\\": \\\"DIN EN 29073-3\\\", \\\"Count\\\": 43},\\n    {\\\"Standard\\\": \\\"DIN 53504\\\", \\\"Count\\\": 21},\\n    {\\\"Standard\\\": \\\"ASTM D 5034\\\", \\\"Count\\\": 20},\\n    {\\\"Standard\\\": \\\"ISO 37\\\", \\\"Count\\\": 16},\\n    {\\\"Standard\\\": \\\"prEN ISO 6892-1 (Anhang G)\\\", \\\"Count\\\": 15},\\n    {\\\"Standard\\\": \\\"ISO 8256\\\", \\\"Count\\\": 15},\\n    {\\\"Standard\\\": \\\"ASTM D5528/D5528M-21\\\", \\\"Count\\\": 15},\\n    {\\\"Standard\\\": \\\"ASTM E 8/E8M\\\", \\\"Count\\\": 15},\\n    {\\\"Standard\\\": \\\"Zugversuch\\\", \\\"Count\\\": 12},\\n    {\\\"Standard\\\": \\\"ASTM D 7269/D 7269 M\\\", \\\"Count\\\": 11},\\n]\\n\\ntesters_raw = [\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"(No Standard)\\\", \\\"Count\\\": 346},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"DIN EN ISO 6892-1\\\", \\\"Count\\\": 174},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"DIN EN ISO 527-1\\\", \\\"Count\\\": 119},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\\\", \\\"Count\\\": 106},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"ISO 179-1\\\", \\\"Count\\\": 60},\\n    {\\\"Tester\\\": \\\"Tester_92\\\", \\\"Standard\\\": \\\"DIN EN 29073-3\\\", \\\"Count\\\": 42},\\n    {\\\"Tester\\\": \\\"Tester_94\\\", \\\"Standard\\\": \\\"DIN EN ISO 6892-1\\\", \\\"Count\\\": 33},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"DIN 53504\\\", \\\"Count\\\": 21},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"ASTM D 5034\\\", \\\"Count\\\": 20},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"ISO 37\\\", \\\"Count\\\": 16},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"prEN ISO 6892-1 (Anhang G)\\\", \\\"Count\\\": 15},\\n    {\\\"Tester\\\": \\\"Tester_3\\\", \\\"Standard\\\": \\\"DIN EN ISO 6892-1\\\", \\\"Count\\\": 15},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"ASTM D5528/D5528M-21\\\", \\\"Count\\\": 15},\\n    {\\\"Tester\\\": \\\"Tester_2\\\", \\\"Standard\\\": \\\"ISO 8256\\\", \\\"Count\\\": 15},\\n    {\\\"Tester\\\": \\\"Tester_72\\\", \\\"Standard\\\": \\\"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\\\", \\\"Count\\\": 14},\\n]\\n\\n# Summarize by tester\\nimport pandas as pd\\ndf_testers = pd.DataFrame(testers_raw)\\ntester_summary = df_testers.groupby(\\\"Tester\\\")[\\\"Count\\\"].sum().reset_index().sort_values(\\\"Count\\\", ascending=False)\\ntester_list = tester_summary.to_dict(orient=\\\"records\\\")\\n\\nresult = {\\n    \\\"total_tests\\\": 1118,\\n    \\\"standards_breakdown\\\": standards_data,\\n    \\\"tester_summary\\\": tester_list\\n}\\n\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"150ba3da-fd7f-463e-814f-425fb955691e\", \"info\": [], \"result\": {\"output\": \"\", \"result\": {\"total_tests\": 1118, \"standards_breakdown\": [{\"Standard\": \"_No Standard\", \"Count\": 346}, {\"Standard\": \"DIN EN ISO 6892-1\", \"Count\": 224}, {\"Standard\": \"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\", \"Count\": 120}, {\"Standard\": \"DIN EN ISO 527-1\", \"Count\": 119}, {\"Standard\": \"ISO 179-1\", \"Count\": 60}, {\"Standard\": \"DIN EN 29073-3\", \"Count\": 43}, {\"Standard\": \"DIN 53504\", \"Count\": 21}, {\"Standard\": \"ASTM D 5034\", \"Count\": 20}, {\"Standard\": \"ISO 37\", \"Count\": 16}, {\"Standard\": \"prEN ISO 6892-1 (Anhang G)\", \"Count\": 15}, {\"Standard\": \"ISO 8256\", \"Count\": 15}, {\"Standard\": \"ASTM D5528/D5528M-21\", \"Count\": 15}, {\"Standard\": \"ASTM E 8/E8M\", \"Count\": 15}, {\"Standard\": \"Zugversuch\", \"Count\": 12}, {\"Standard\": \"ASTM D 7269/D 7269 M\", \"Count\": 11}], \"tester_summary\": [{\"Tester\": \"Tester_2\", \"Count\": 907}, {\"Tester\": \"Tester_92\", \"Count\": 42}, {\"Tester\": \"Tester_94\", \"Count\": 33}, {\"Tester\": \"Tester_3\", \"Count\": 15}, {\"Tester\": \"Tester_72\", \"Count\": 14}]}}}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "Here is a comprehensive overview of all **1,118 tensile tests** performed for **Company_1**:\n\n---\n\n## 📊 Tensile Tests for Company_1 — Summary\n\n### 🔢 Total Tests: **1,118**\n\n---\n\n### 📋 Breakdown by Testing Standard (Top 15)\n\n| Standard | Count |\n|---|---|\n| *(No Standard specified)* | 346 |\n| DIN EN ISO 6892-1 | 224 |\n| DIN EN ISO 6892-1 / ISO 10113 / ISO 10275 | 120 |\n| DIN EN ISO 527-1 | 119 |\n| ISO 179-1 | 60 |\n| DIN EN 29073-3 | 43 |\n| DIN 53504 | 21 |\n| ASTM D 5034 | 20 |\n| ISO 37 | 16 |\n| prEN ISO 6892-1 (Anhang G) | 15 |\n| ISO 8256 | 15 |\n| ASTM D5528/D5528M-21 | 15 |\n| ASTM E 8/E8M | 15 |\n| Zugversuch | 12 |\n| ASTM D 7269/D 7269 M | 11 |\n\n---\n\n### 👷 Breakdown by Tester\n\n| Tester | Tests |\n|---|---|\n| Tester_2 | 907 |\n| Tester_92 | 42 |\n| Tester_94 | 33 |\n| Tester_3 | 15 |\n| Tester_72 | 14 |\n| Other testers | ~107 |\n\n---\n\n### 📅 Date Range\n- **Earliest test:** January 2024\n- **Latest test:** December 2025\n\n---\n\n### 🔑 Key Observations\n\n- **Tester_2** is by far the most active, responsible for ~81% of all tests (907 out of 1,118).\n- **DIN EN ISO 6892-1** (and its variants) is the dominant standard, covering ~344 tests — a classic metallic tensile standard.\n- **346 tests have no standard assigned**, which may be worth reviewing for data completeness.\n- A wide variety of standards are used, covering **metals** (6892-1), **plastics** (527-1), **textiles** (EN 29073-3), **rubber** (ISO 37, DIN 53504), and **composites** (ASTM D5528), indicating a diverse material testing scope for this customer.\n\nWould you like to drill deeper into any specific standard, tester, date range, or specimen type?",
+          "type": "text",
+          "index": 0
+        }
+      ]
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01Fpo5BXoj2vSNE4YYn7rMxj",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "render_visualization",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"chart_type\": \"bar\", \"title\": \"Tensile Tests by Standard — Company_1\", \"x_axis_key\": \"Standard\", \"data_json\": \"[\\n  {\\\"Standard\\\": \\\"No Standard\\\", \\\"Count\\\": 346},\\n  {\\\"Standard\\\": \\\"DIN EN ISO 6892-1\\\", \\\"Count\\\": 224},\\n  {\\\"Standard\\\": \\\"DIN EN ISO 6892-1 / ISO 10113 / ISO 10275\\\", \\\"Count\\\": 120},\\n  {\\\"Standard\\\": \\\"DIN EN ISO 527-1\\\", \\\"Count\\\": 119},\\n  {\\\"Standard\\\": \\\"ISO 179-1\\\", \\\"Count\\\": 60},\\n  {\\\"Standard\\\": \\\"DIN EN 29073-3\\\", \\\"Count\\\": 43},\\n  {\\\"Standard\\\": \\\"DIN 53504\\\", \\\"Count\\\": 21},\\n  {\\\"Standard\\\": \\\"ASTM D 5034\\\", \\\"Count\\\": 20},\\n  {\\\"Standard\\\": \\\"ISO 37\\\", \\\"Count\\\": 16},\\n  {\\\"Standard\\\": \\\"prEN ISO 6892-1 (Anhang G)\\\", \\\"Count\\\": 15},\\n  {\\\"Standard\\\": \\\"ISO 8256\\\", \\\"Count\\\": 15},\\n  {\\\"Standard\\\": \\\"ASTM D5528/D5528M-21\\\", \\\"Count\\\": 15},\\n  {\\\"Standard\\\": \\\"ASTM E 8/E8M\\\", \\\"Count\\\": 15},\\n  {\\\"Standard\\\": \\\"Zugversuch\\\", \\\"Count\\\": 12},\\n  {\\\"Standard\\\": \\\"ASTM D 7269/D 7269 M\\\", \\\"Count\\\": 11}\\n]\", \"chart_config_json\": \"{\\\"Count\\\": {\\\"label\\\": \\\"Number of Tests\\\", \\\"color\\\": \\\"var(--chart-1)\\\"}}\", \"description\": \"Distribution of 1,118 tensile tests across testing standards (top 15)\", \"widget_size\": \"2x2\"}"
+        },
+        {
+          "id": "toolu_01PRmbNjRb1keNBqMFfym93J",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "render_visualization",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"chart_type\": \"pie\", \"title\": \"Tensile Tests by Tester — Company_1\", \"x_axis_key\": \"Tester\", \"data_json\": \"[\\n  {\\\"Tester\\\": \\\"Tester_2\\\", \\\"value\\\": 907, \\\"fill\\\": \\\"var(--chart-1)\\\"},\\n  {\\\"Tester\\\": \\\"Tester_92\\\", \\\"value\\\": 42, \\\"fill\\\": \\\"var(--chart-2)\\\"},\\n  {\\\"Tester\\\": \\\"Tester_94\\\", \\\"value\\\": 33, \\\"fill\\\": \\\"var(--chart-3)\\\"},\\n  {\\\"Tester\\\": \\\"Tester_3\\\", \\\"value\\\": 15, \\\"fill\\\": \\\"var(--chart-4)\\\"},\\n  {\\\"Tester\\\": \\\"Tester_72\\\", \\\"value\\\": 14, \\\"fill\\\": \\\"var(--chart-5)\\\"},\\n  {\\\"Tester\\\": \\\"Others\\\", \\\"value\\\": 107, \\\"fill\\\": \\\"grey\\\"}\\n]\", \"chart_config_json\": \"{\\\"value\\\": {\\\"label\\\": \\\"Tests\\\"}}\", \"description\": \"Tester_2 accounts for ~81% of all tensile tests for Company_1\", \"widget_size\": \"1x1\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "Visualization successfully rendered on UI."
+    },
+    {
+      "type": "ToolMessage",
+      "content": "Visualization successfully rendered on UI."
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01QtCXpSA61wA2rzXeHgjKZo",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "submit_answer",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"answer\": \"A total of **1,118 tensile tests** have been performed for **Company_1**. Here are the key highlights:\\n\\n---\\n\\n### 📊 By Testing Standard (Top 5)\\n| Standard | Count |\\n|---|---|\\n| *(No Standard specified)* | 346 |\\n| DIN EN ISO 6892-1 | 224 |\\n| DIN EN ISO 6892-1 / ISO 10113 / ISO 10275 | 120 |\\n| DIN EN ISO 527-1 | 119 |\\n| ISO 179-1 | 60 |\\n| *(+ 10 more standards)* | 249 |\\n\\n---\\n\\n### 👷 By Tester\\n| Tester | Tests |\\n|---|---|\\n| Tester_2 | 907 (~81%) |\\n| Tester_92 | 42 |\\n| Tester_94 | 33 |\\n| Others | ~136 |\\n\\n---\\n\\n### 📅 Date Range\\n- **From:** January 2024 — **To:** December 2025\\n\\n---\\n\\n### 🔑 Key Observations\\n- **Tester_2** is the dominant operator, responsible for ~81% of all tensile tests.\\n- **DIN EN ISO 6892-1** (and variants) is the most frequently applied standard, typical for metallic tensile testing.\\n- **346 tests lack a standard assignment**, which may warrant data quality review.\\n- A broad range of standards is used, covering metals, plastics, rubber, textiles, and composites — indicating a diverse material testing portfolio for this customer.\", \"hypotheses\": [\"Is the high number of tests without a standard assigned (346) a data quality issue, or are these intentional free-definition tests? Investigating their test programs and parameters could clarify this.\",\"Tester_2 performs ~81% of all tensile tests for Company_1 — is this creating a bottleneck or single-point-of-failure risk? A workload distribution analysis across all customers could reveal capacity concerns.\",\"Given the wide variety of standards used (metals, plastics, rubber, composites), are there consistent specimen geometries and test speeds applied per standard? A compliance audit per standard could identify deviations from normative requirements.\"]}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "Answer submitted."
+    },
+    {
+      "type": "HumanMessage",
+      "content": "Give me specific results for this"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "I need to find which result types are available for these tests. Let me first check the valuecolumns structure to identify available result UUIDs.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01TModPNzhmnr9RJegp1MmPM",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.CUSTOMER_NAME\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":{\"$regex\":\"tensile\",\"$options\":\"i\"}}, \"projection\": {\"_id\":1,\"valueColumns\":1}, \"limit\": 3}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"47650a11-7406-4906-984c-0189f69557d9\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 1118 documents. Returning 3 documents.\"], \"summary\": [{\"_id\": \"{A9F3D82D-B4F4-4d3c-BFEB-C36CDA84110A}\", \"valueColumns\": [{\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 5, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 6015}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.TemperatureV2\", \"valueTableId\": \"{110A8DC1-1552-452b-B022-04D131C21B47}\", \"_id\": \"{110A8DC1-1552-452b-B022-04D131C21B47}_Key\", \"name\": \"Temperature\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.TemperatureV2\", \"valueTableId\": \"{110A8DC1-1552-452b-B022-04D131C21B47}\", \"_id\": \"{110A8DC1-1552-452b-B022-04D131C21B47}_Value\", \"name\": \"Temperature\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, \"<TRUNCATED 424 items>\"]}, {\"_id\": \"{1153B45F-8658-4681-9C59-E5939B9CE421}\", \"valueColumns\": [{\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 5, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 6016}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.TemperatureV2\", \"valueTableId\": \"{110A8DC1-1552-452b-B022-04D131C21B47}\", \"_id\": \"{110A8DC1-1552-452b-B022-04D131C21B47}_Key\", \"name\": \"Temperature\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.TemperatureV2\", \"valueTableId\": \"{110A8DC1-1552-452b-B022-04D131C21B47}\", \"_id\": \"{110A8DC1-1552-452b-B022-04D131C21B47}_Value\", \"name\": \"Temperature\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{11A91358-1286-44db-BDDE-8C0030839939}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Specimen width\", \"modifiedOn\": {}}, \"<TRUNCATED 424 items>\"]}, {\"_id\": \"{F04F66CC-CF3A-43fa-B273-00DE9338255D}\", \"valueColumns\": [{\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 6, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 2942}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 113, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 2942}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 6, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 2942}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, \"<TRUNCATED 784 items>\"]}]}"
+    }
+  ]
+}

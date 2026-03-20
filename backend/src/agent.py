@@ -14,7 +14,15 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 from src import db
+from src.db_context import build_db_context, resolve_childId
 from langchain_core.messages import trim_messages
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+from langchain_mcp_adapters.tools import load_mcp_tools
+from contextlib import AsyncExitStack
+import asyncio
+
+
 
 import os
 
@@ -22,8 +30,30 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+_orig_warn = logging.root.warning
+def _traced_warn(msg, *args, **kwargs):
+    if "Failed to validate" in str(msg):
+        import traceback, io
+        buf = io.StringIO()
+        traceback.print_stack(file=buf)
+        print("=== PING STACK TRACE ===")
+        print(buf.getvalue())
+        print("=== END TRACE ===")
+    _orig_warn(msg, *args, **kwargs)
+logging.root.warning = _traced_warn
+
+# ---------------------------------------------------------------------------
+# Paths for UUID lookup tables (adjust if your project layout differs)
+# ---------------------------------------------------------------------------
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+_CHANNEL_MAP_PATH     = os.path.join(_SRC_DIR, "..", "data", "channelParameterMap.json")
+_RESULT_TYPE_MAP_PATH = os.path.join(_SRC_DIR, "..", "data", "TestResultTypes.json")
+
 # Module-level reference to the active Agent's tool_results, set by Agent._wrap_tool_node
 _active_tool_results: dict[str, dict] = {}
+
+# Holds the dynamically built DB context string (populated in init_mcp_client)
+_db_context_string: str = ""
 
 
 def _resolve_data_id(data_id: str) -> str | None:
@@ -69,8 +99,6 @@ def _message_metrics(messages) -> dict:
 
 def _dump_invoke_context(node_name: str, messages: list):
     import time
-    import os
-    import json
 
     debug_dir = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts"
@@ -91,10 +119,7 @@ def _dump_invoke_context(node_name: str, messages: list):
     try:
         with open(debug_file, "w", encoding="utf-8") as f:
             json.dump(
-                {
-                    "node": node_name,
-                    "messages": dumpable_messages,
-                },
+                {"node": node_name, "messages": dumpable_messages},
                 f,
                 indent=2,
                 ensure_ascii=False,
@@ -103,72 +128,35 @@ def _dump_invoke_context(node_name: str, messages: list):
         logger.error(f"Failed to dump invoke context: {e}")
 
 
-DB_CONTEXT = """
-## Database Overview
+# ---------------------------------------------------------------------------
+# MCP server config
+# ---------------------------------------------------------------------------
 
-### Collections
-- `tests` — primary collection containing all material test records
-
-### `tests` Schema
-Top-level fields:
-- `_id`: ObjectId
-- `state`: string — test outcome, e.g. `"finishedOK"`, `"finishedError"`
-- `timestamp`: datetime — when the test was recorded
-- `TestParametersFlat`: object — flattened key/value test parameters
-  - Field names are CASE-SENSITIVE and often SCREAMING_SNAKE_CASE
-  - Examples: `SPECIMEN_TYPE`, `CUSTOMER`, `Upper force limit`
-- `valuecolumns`: array — stores test results and measurements
-  - `_id`: string — UUID, sometimes ends with `_key` (ignore these)
-  - `valuetableId`: UUID — references the type of value stored
-  - `refId`: ObjectId — reference back to the source test `_id`
-
-### UUID References
-- For **Results** (single value per valuecolumn): refer to `TestResultTypes`
-- For **Measurements** (time-series/channel data): refer to `channelParameterMap`
-- `childId` is constructed as `[valuecolumn._id].[valuecolumn.valuetableId]`
-
-### Query Tips
-- Always use `get_sample_documents` first to verify exact field names before querying
-- Field names are CASE-SENSITIVE — e.g. `SPECIMEN_TYPE` not `specimen_type`
-- Fields with spaces in their names are valid in MongoDB: e.g. `TestParametersFlat.Upper force limit`
-- An empty result from `find` may mean a wrong field name, not missing data
-- `valuecolumn._id` entries ending with `_key` were not migrated — ignore them
-"""
-
-# MCP Server Configuration - Streamable HTTP transport (Docker)
-# credentials = base64.b64encode(b"admin:olmamessen1st").decode()
-
-# MCP_SERVERS = {
-#     "mongodb": {
-#         "url": "https://test.koprolin.com/mcp",
-#         "transport": "streamable_http",
-#         "headers": {
-#             "Authorization": f"Basic {credentials}"
-#         }
-#     }
-# }
-
+# agent.py — replace MCP_SERVERS config
 MCP_SERVERS = {
     "mongodb": {
-        "url": os.getenv("MCP_URL", "http://202.61.251.60:3001/mcp"),
-        "transport": "streamable_http",
+        "command": "docker",
+        "args": [
+            "run", "--rm", "-i",
+            "-e", f"MDB_MCP_CONNECTION_STRING=mongodb://admin:olmamessen1st@202.61.251.60:27017/?authSource=admin",
+            "mongodb/mongodb-mcp-server:latest"
+        ],
+        "transport": "stdio",
     }
 }
 
-# # Global MCP client (initialized via lifespan)
-# mcp_client: MultiServerMCPClient = None
-# mcp_tools: list = []
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 
 @tool
 async def get_sample_documents() -> str:
-    """Returns sample documents from a collection as a string"""
-
+    """Returns sample documents from the _tests collection as a JSON string."""
     results = await db.get_sample_documents()
     return json.dumps(results, default=str)
 
 
-# Custom tool for Recharts-formatted aggregations (MCP's aggregate is generic)
 @tool
 async def get_aggregated_data_for_chart(
     group_by_field: str, aggregations: str, match_filters: str = None
@@ -183,8 +171,8 @@ async def get_aggregated_data_for_chart(
         match_filters: Optional JSON match filters. Example: '{"state": "finishedOK"}'
     """
     try:
-        agg_dict = json.loads(aggregations) if aggregations else {}
-        match_dict = json.loads(match_filters) if match_filters else None
+        agg_dict   = json.loads(aggregations)    if aggregations    else {}
+        match_dict = json.loads(match_filters)   if match_filters   else None
     except json.JSONDecodeError as e:
         return f"Error: Failed to parse JSON arguments: {e}"
 
@@ -211,32 +199,13 @@ def render_visualization(
     Args:
         chart_type: One of 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
         title: Chart title.
-        x_axis_key: The key in data records used for the x-axis / category labels (e.g. 'date', 'material', 'name').
-        data_json: JSON string of FLAT records array. Each record is an object with the x_axis_key and one or more numeric series keys.
-            Example: '[{"date": "2024-01", "tensile_strength": 420, "yield_strength": 380}, {"date": "2024-02", "tensile_strength": 435, "yield_strength": 390}]'
-            For pie charts: '[{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]'
-            For boxplot charts: each record MUST have keys "min", "q1", "median", "q3", "max", and optionally "outliers" (array of numbers).
-            Example: '[{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}, {"name": "Material B", "min": 300, "q1": 340, "median": 370, "q3": 400, "max": 430, "outliers": [280, 500]}]'
-        chart_config_json: JSON string defining series metadata. Keys are the series data keys, values have 'label' and 'color'.
-            Color can be a CSS color name (e.g. "red", "blue"), hex (e.g. "#ff0000"), or theme token (e.g. "var(--chart-1)").
-            If the user mentions specific colors, use those exact CSS color names.
-            Example: '{"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}'
-            For pie charts with user-specified colors: '{"value": {"label": "Count"}}' and set "fill" in data_json: '[{"name": "Red", "value": 50, "fill": "red"}, {"name": "Blue", "value": 50, "fill": "blue"}]'
-            For boxplot charts: '{"median": {"label": "Median", "color": "var(--chart-1)"}}'
+        x_axis_key: The key in data records used for the x-axis / category labels.
+        data_json: JSON string of FLAT records array.
+        chart_config_json: JSON string defining series metadata (label + color per key).
         description: Optional short description shown below the title.
-        replace_widget_id: If the user asked to modify or update an existing chart (e.g. a SELECTED widget), pass that widget's id here.
-            The existing chart will be replaced in-place instead of creating a new one.
-            Leave empty ("") when creating a brand-new chart.
-        widget_size: Dashboard widget size in HxW format (rows × columns). Choose based on data complexity:
-            "1x1" — compact single cell, good for a single KPI or simple pie chart
-            "1x2" — standard wide chart (default), good for most bar/line/area charts
-            "2x1" — tall narrow chart, good for vertical distributions or ranked lists
-            "2x2" — large square chart, best for complex multi-series, boxplots with many groups, or scatter plots needing detail
-        data_id: Optional data_id from a previous MongoDB tool result. ONLY use this when the
-            referenced data is already FLAT Recharts-compatible records (e.g. from an `aggregate`
-            pipeline with a `$project` stage that outputs flat objects). Do NOT use data_id for
-            raw `find` results — those contain nested documents that the chart cannot render.
-            When in doubt, build data_json manually or use run_python_analysis to reshape first.
+        replace_widget_id: Pass an existing widget's id to update it in-place.
+        widget_size: HxW format — "1x1", "1x2" (default), "2x1", "2x2".
+        data_id: Optional data_id from a previous MongoDB tool result (flat records only).
     """
     if data_id:
         resolved = _resolve_data_id(data_id)
@@ -255,26 +224,13 @@ def render_text_block(
     title: str, content: str, replace_widget_id: str = "", widget_size: str = "1x2"
 ) -> str:
     """
-    Render a Markdown text block (headlines + paragraphs) on the user's dashboard.
-    Use this for structured analysis summaries, key findings, or explanatory text
-    that genuinely benefits from a persistent dashboard presence.
-
-    Do NOT overuse — only create a text block when the content adds real value
-    beyond the chat answer. Never use it as a replacement for a chart or table.
-
-    Markdown supported in content: ## headings, ### subheadings, paragraphs,
-    **bold**, *italic*, bullet lists, numbered lists.
+    Render a Markdown text block on the user's dashboard.
 
     Args:
-        title: Short widget title shown in the widget header.
-        content: Markdown body with optional headings and paragraphs.
-            Example: "## Key Findings\\n\\n- Tensile strength within spec\\n- No trend detected\\n\\n### Recommendation\\n\\nContinue monitoring monthly."
-        replace_widget_id: Pass an existing widget's id to update it in-place. Leave empty to create a new widget.
-        widget_size: HxW format (rows x columns):
-            "1x1" — very brief notes or a single key finding
-            "1x2" — standard wide (DEFAULT): most text summaries
-            "2x1" — tall narrow: longer structured reports
-            "2x2" — large square: comprehensive multi-section analysis
+        title: Short widget title.
+        content: Markdown body (## headings, **bold**, bullet lists, etc.).
+        replace_widget_id: Pass an existing widget's id to update it in-place.
+        widget_size: "1x1", "1x2" (default), "2x1", "2x2".
     """
     return "Text block rendered on dashboard."
 
@@ -283,10 +239,9 @@ def render_text_block(
 def remove_widget(widget_id: str, reason: str = "") -> str:
     """
     Remove a widget from the user's dashboard.
-    Use this when the user asks to remove, delete, or clear a specific chart/widget.
 
     Args:
-        widget_id: The widget ID to remove (from the CURRENT DASHBOARD STATE context).
+        widget_id: The widget ID to remove.
         reason: Brief reason for removal.
     """
     return f"Widget {widget_id} removed from dashboard."
@@ -295,12 +250,10 @@ def remove_widget(widget_id: str, reason: str = "") -> str:
 @tool
 def reorder_dashboard(widget_ids: list[str]) -> str:
     """
-    Reorder widgets on the user's dashboard. Provide the widget IDs in the desired order.
-    Widgets will be reflowed in a grid layout in this order.
-    Use this when the user asks to rearrange, reorder, or reorganize their dashboard.
+    Reorder widgets on the user's dashboard.
 
     Args:
-        widget_ids: List of widget IDs in the desired display order (from the CURRENT DASHBOARD STATE context).
+        widget_ids: List of widget IDs in the desired display order.
     """
     return f"Dashboard reordered with {len(widget_ids)} widgets."
 
@@ -311,7 +264,7 @@ def submit_answer(answer: str, hypotheses: list[str]) -> str:
     Always call this tool to submit your final answer and hypotheses.
 
     Args:
-        answer: Clear, concise answer to the user's question
+        answer: Clear, concise answer to the user's question.
         hypotheses: List of 3 follow-up hypotheses worth investigating. Empty list if none.
     """
     return "Answer submitted."
@@ -324,32 +277,19 @@ def run_python_analysis(
     """
     Execute a Python code snippet for statistical analysis on material testing data.
 
-    Use this for: statistical significance tests, trend/degradation analysis,
-    outlier detection, correlation analysis, descriptive statistics.
-
     The execution environment pre-populates:
       - `data`: list of dicts parsed from data_json (or resolved from data_id)
       - `df`: pandas DataFrame built from data
       - `datasets`: dict mapping data_id → resolved data (only when data_ids is used)
-      - `np`: numpy
-      - `pd`: pandas
-      - `stats`: scipy.stats
+      - `np`: numpy  |  `pd`: pandas  |  `stats`: scipy.stats
 
     Assign your final answer to `result`.
 
     Args:
         code: Python snippet. Must assign `result` to capture output.
-        data_json: JSON string (list of dicts) from a `find` or `aggregate` call.
-            Can be omitted if data_id or data_ids is provided.
-        data_id: Optional data_id from a previous MongoDB tool result. If provided,
-            the referenced dataset is resolved and used instead of data_json.
-            Sets `data` and `df` to the resolved dataset.
-        data_ids: Optional list of data_ids from previous MongoDB tool results.
-            When provided, each is resolved and available in `datasets` dict
-            (keyed by data_id). The first dataset is also set as `data` and `df`.
-
-    Returns:
-        JSON string with keys "output" (stdout) and "result" (value of `result`).
+        data_json: JSON string (list of dicts). Omit if using data_id / data_ids.
+        data_id: data_id from a previous MongoDB tool result.
+        data_ids: List of data_ids — all resolved into `datasets` dict.
     """
     import numpy as np
     import pandas as pd
@@ -357,64 +297,30 @@ def run_python_analysis(
     from langchain_experimental.utilities import PythonREPL
 
     TIMEOUT_SECONDS = 10
+    datasets: dict = {}
 
-    datasets = {}
-
-    # Resolve multiple data_ids if provided
     if data_ids:
         for did in data_ids:
             resolved = _resolve_data_id(did)
-            if resolved is not None:
-                if isinstance(resolved, str):
-                    try:
-                        datasets[did] = json.loads(resolved)
-                    except json.JSONDecodeError as e:
-                        return json.dumps(
-                            {
-                                "error": f"Failed to parse resolved data for data_id {did}: {e}",
-                                "output": "",
-                                "result": None,
-                            }
-                        )
-                else:
-                    datasets[did] = resolved
-            else:
+            if resolved is None:
                 return json.dumps(
                     {"error": f"Unknown data_id: {did}", "output": "", "result": None}
                 )
-        # Set `data` to the first dataset for convenience
-        first_key = data_ids[0]
-        data = datasets[first_key]
+            datasets[did] = json.loads(resolved) if isinstance(resolved, str) else resolved
+        data = datasets[data_ids[0]]
     elif data_id:
         resolved = _resolve_data_id(data_id)
-        if resolved is not None:
-            if isinstance(resolved, str):
-                try:
-                    data = json.loads(resolved)
-                except json.JSONDecodeError as e:
-                    return json.dumps(
-                        {
-                            "error": f"Failed to parse resolved data: {e}",
-                            "output": "",
-                            "result": None,
-                        }
-                    )
-            else:
-                data = resolved
-        else:
+        if resolved is None:
             return json.dumps(
                 {"error": f"Unknown data_id: {data_id}", "output": "", "result": None}
             )
+        data = json.loads(resolved) if isinstance(resolved, str) else resolved
     else:
         try:
             data = json.loads(data_json) if data_json else []
         except json.JSONDecodeError as e:
             return json.dumps(
-                {
-                    "error": f"Failed to parse data_json: {e}",
-                    "output": "",
-                    "result": None,
-                }
+                {"error": f"Failed to parse data_json: {e}", "output": "", "result": None}
             )
 
     repl = PythonREPL()
@@ -443,19 +349,11 @@ def run_python_analysis(
             output = future.result(timeout=TIMEOUT_SECONDS)
     except concurrent.futures.TimeoutError:
         return json.dumps(
-            {
-                "error": f"Execution timed out after {TIMEOUT_SECONDS} seconds.",
-                "output": "",
-                "result": None,
-            }
+            {"error": f"Execution timed out after {TIMEOUT_SECONDS} seconds.", "output": "", "result": None}
         )
     except Exception as e:
         return json.dumps(
-            {
-                "error": f"Execution error: {type(e).__name__}: {e}",
-                "output": "",
-                "result": None,
-            }
+            {"error": f"Execution error: {type(e).__name__}: {e}", "output": "", "result": None}
         )
 
     raw_result = repl.globals.get("result") or repl.locals.get("result")
@@ -464,142 +362,170 @@ def run_python_analysis(
     except Exception:
         serialized_result = str(raw_result)
 
-    return json.dumps(
-        {
-            "output": output,
-            "result": serialized_result,
-        }
-    )
+    return json.dumps({"output": output, "result": serialized_result})
 
 
-# Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [run_python_analysis]
-dashboard_tools = [
-    render_visualization,
-    render_text_block,
-    remove_widget,
-    reorder_dashboard,
-]
-tool_node = ToolNode(custom_tools + dashboard_tools)
+# ---------------------------------------------------------------------------
+# Tool groups
+# ---------------------------------------------------------------------------
+
+custom_tools    = [run_python_analysis, resolve_childId]
+dashboard_tools = [render_visualization, render_text_block, remove_widget, reorder_dashboard]
+tool_node         = ToolNode(custom_tools + dashboard_tools)
 visualization_tool = ToolNode(dashboard_tools)
-submit_tool = ToolNode([submit_answer])
+submit_tool       = ToolNode([submit_answer])
 
-#llm = ChatAnthropic(model="claude-sonnet-4-6")
-# llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
-llm = ChatOpenAI(model="gpt-5.4")
-llm_with_tools = llm.bind_tools(custom_tools)
-llm_visualizer = llm.bind_tools(dashboard_tools)
-llm_output = llm.bind_tools([submit_answer], tool_choice="submit_answer")
+#llm              = ChatOpenAI(model="gpt-5.4")
+llm = ChatAnthropic(model="claude-sonnet-4-6")
+llm_with_tools   = llm.bind_tools(custom_tools)
+llm_visualizer   = llm.bind_tools(dashboard_tools)
+llm_output       = llm.bind_tools([submit_answer], tool_choice="submit_answer")
 
-# Will be rebound after MCP tools are loaded
 _all_tools = custom_tools.copy()
 
 
-async def init_mcp_client():
+# ---------------------------------------------------------------------------
+# MCP initialisation — also builds DB context here
+# ---------------------------------------------------------------------------
+
+_mcp_exit_stack: AsyncExitStack | None = None
+_ping_task: asyncio.Task | None = None
+
+
+async def _ping_keepalive(session: ClientSession, interval: float = 25.0):
+    """
+    Proactively send client→server pings on our schedule.
+    This keeps the connection alive AND means we control the ping timing,
+    reducing the chance the server sends an unsolicited ping mid-request.
+    """
     try:
-        """Initialize the MCP client and load MongoDB tools."""
-        global mcp_client, mcp_tools, _all_tools, tool_node, llm_with_tools, agent
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await session.send_ping()
+            except Exception as e:
+                logger.debug("[mcp] ping failed: %s", e)
+                break
+    except asyncio.CancelledError:
+        pass
 
-        mcp_client = MultiServerMCPClient(MCP_SERVERS)
 
-        # New API: get_tools() is async and handles connection internally
-        mcp_tools = await mcp_client.get_tools()
-        print(f"Loaded {len(mcp_tools)} tools from MongoDB MCP server:")
-        for t in mcp_tools:
-            print(f"  - {t.name}: {t.description[:60]}...")
+async def init_mcp_client():
+    global mcp_tools, _all_tools, tool_node, llm_with_tools
+    global _db_context_string, _mcp_exit_stack, _ping_task
 
-        # Combine custom tools with MCP tools
-        _all_tools = custom_tools + mcp_tools
-        tool_node = ToolNode(_all_tools)
-        llm_with_tools = llm.bind_tools(_all_tools)
+    # 1. Build DB context
+    _db_context_string = await build_db_context(
+        db_module=db,
+        channel_map_path=_CHANNEL_MAP_PATH if os.path.exists(_CHANNEL_MAP_PATH) else None,
+        result_type_map_path=_RESULT_TYPE_MAP_PATH if os.path.exists(_RESULT_TYPE_MAP_PATH) else None,
+    )
+    logger.info("[db-context] Built DB context (%d chars)", len(_db_context_string))
 
-        return mcp_tools
-    except Exception as e:
-        raise Exception("Exception occured:", e)
+    # 2. Open transport + session manually so we control the lifecycle
+    mcp_url = os.getenv("MCP_URL", "http://202.61.251.60:3001/mcp")
+    _mcp_exit_stack = AsyncExitStack()
+
+    read, write, _ = await _mcp_exit_stack.enter_async_context(
+        streamablehttp_client(mcp_url)
+    )
+    session: ClientSession = await _mcp_exit_stack.enter_async_context(
+        ClientSession(read, write)
+    )
+    await session.initialize()
+    logger.info("[mcp] Session initialized")
+
+    # 3. Start proactive ping task — suppresses server-initiated pings
+    #    by keeping the connection visibly alive from our side
+    _ping_task = asyncio.create_task(_ping_keepalive(session))
+
+    # 4. Patch the session's notification handler to silently swallow
+    #    any ping frames that still arrive from the server side
+    _original_recv = session._received_notification if hasattr(
+        session, "_received_notification"
+    ) else None
+
+    if _original_recv:
+        async def _safe_recv_notification(notification):
+            try:
+                await _original_recv(notification)
+            except Exception as e:
+                logger.debug("[mcp] swallowed notification error: %s", e)
+        session._received_notification = _safe_recv_notification
+
+    # 5. Load tools and rebuild tool/llm bindings
+    mcp_tools = await load_mcp_tools(session)
+    logger.info("[mcp] Loaded %d tools", len(mcp_tools))
+
+    _all_tools     = custom_tools + mcp_tools
+    tool_node      = ToolNode(_all_tools)
+    llm_with_tools = llm.bind_tools(_all_tools)
+
+    return mcp_tools
 
 
 async def shutdown_mcp_client():
-    """Shutdown the MCP client."""
-    global mcp_client
-    # New API doesn't require explicit cleanup
-    mcp_client = None
+    global _mcp_exit_stack, _ping_task
+    if _ping_task and not _ping_task.done():
+        _ping_task.cancel()
+        try:
+            await _ping_task
+        except asyncio.CancelledError:
+            pass
+    if _mcp_exit_stack:
+        await _mcp_exit_stack.aclose()
+        _mcp_exit_stack = None
 
+def _patch_mcp_session():
+    """
+    Patch BaseSession to swallow server-initiated pings before Pydantic
+    validation consumes them and drops the pending response Future.
+    """
+    import mcp.shared.session as _sess
 
-# system_prompt = """You are CoMat, an AI material testing assistant with MongoDB database access.
+    if getattr(_sess.BaseSession, '_ping_patch_applied', False):
+        return  # idempotent
 
-# AVAILABLE TOOLS:
+    original_handle = _sess.BaseSession._handle_incoming
 
-# MongoDB (from MCP server):
-# - `find` - Query documents with filters, projection, and sorting
-# - `aggregate` - Run aggregation pipelines
-# - `collection-schema` - Understand collection structure
-# - `list-collections` - See available collections
-# - `count` - Count matching documents
+    async def _patched_handle_incoming(self, message):
+        # message is a SessionMessage | Exception
+        # Check for ping before Pydantic tries to validate it as ServerNotification
+        try:
+            from mcp.shared.message import SessionMessage
+            if isinstance(message, SessionMessage):
+                raw = getattr(message.message, 'root', None)
+                if raw is not None and getattr(raw, 'method', None) == 'ping':
+                    # It's a request (has an id) — send an empty pong
+                    req_id = getattr(raw, 'id', None)
+                    if req_id is not None:
+                        import mcp.types as _t
+                        pong = _t.JSONRPCMessage(
+                            _t.JSONRPCResponse(jsonrpc='2.0', id=req_id, result={})
+                        )
+                        await self._write_stream.send(SessionMessage(message=pong))
+                    return  # swallow either way — don't pass to normal dispatch
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug("[mcp-patch] ping intercept error: %s", e)
 
-# Visualization:
-# - `get_aggregated_data_for_chart` - Recharts-formatted aggregations
-# - `render_visualization` - Display charts on the UI
+        return await original_handle(self, message)
 
-# Statistical Analysis:
-# - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data
+    _sess.BaseSession._handle_incoming = _patched_handle_incoming
+    _sess.BaseSession._ping_patch_applied = True
 
-# WORKFLOW FOR STATISTICAL QUESTIONS:
-# 1. Use `find` or `aggregate` to retrieve raw data as a JSON list.
-# 2. Pass that JSON string directly into `run_python_analysis` as `data_json`.
-# 3. Write a Python snippet that assigns the final answer to `result`.
-# 4. Use the returned `result` to compose your natural-language answer.
+_patch_mcp_session()
 
-# Example — significance test between two groups:
-#   code = \"\"\"
-#   group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
-#   group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
-#   t, p = stats.ttest_ind(group_a, group_b)
-#   result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
-#   \"\"\"
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
 
-# Example — trend / degradation over time:
-#   code = \"\"\"
-#   vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
-#   x = np.arange(len(vals))
-#   slope, _, _, p, _ = stats.linregress(x, vals)
-#   result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
-#   \"\"\"
+memory = MemorySaver()
 
-# ALWAYS call `render_visualization` when showing aggregated or statistical data.
-# """
-
-# output_system_prompt = """You are a material testing AI assistant.
-
-# Based on the tool results and analysis above:
-# 1. Write a clear, concise answer to the user's question
-# 2. After your answer, suggest 2-3 follow-up hypotheses worth investigating if there are any. Don't always force it.
-# """
-
-# intermediate_output_system_prompt = """briefly summarize the findings
-# """
-
-# self_critic_system_prompt = critic_system_prompt = """You are a critical reviewer of material testing analysis.
-
-# Review the previous conversation history and output ONLY a JSON object:
-# {
-#   "verdict": "accept|retry",
-#   "confidence": "high|medium|low",
-#   "text": "The verdict you made and why you made this verdict",
-#   "missing_data": "what tool should be called to improve the answer, or null",
-#   "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
-#   "tool_args": {...} or null,
-#   "caveats": ["caveat 1", "caveat 2"]
-# }
-
-# Verdict rules:
-# - accept: answer is well supported by data
-# - retry: answer needs more data, specify which tool to call
-# - escalate: query is too complex, needs deeper analysis
-# """
-
-# visualizer_system_prompt = """You are CoMat, an AI material testing assistant.
-# You should inspect if the previous results would benefit from a visualization. If you want to visualize
-# use the render_visualization function to visualize the data. If not, still call the function with none values."""
+# These are overwritten per-Agent instance in Agent.__init__
+system_prompt            = ""
+output_system_prompt     = ""
+visualizer_system_prompt = ""
 
 
 def call_model(state: MessagesState):
@@ -617,9 +543,7 @@ def call_model(state: MessagesState):
     _dump_invoke_context("call_model", messages)
     response = llm_with_tools.invoke(messages)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = (
-        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
-    )
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
     logger.warning("[context-debug] call_model action: %s", action_label)
     return {"messages": [response]}
 
@@ -635,7 +559,6 @@ def output_node(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
-    # Claude requires conversation to end with a user message after tool results
     messages = messages + [
         HumanMessage(content="Given the current conversation, summarize to an answer.")
     ]
@@ -649,61 +572,22 @@ def output_node(state: MessagesState):
     _dump_invoke_context("output_node", messages)
     response = llm_output.invoke(messages)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = (
-        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
-    )
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
     logger.info("[context-debug] output_node action: %s", action_label)
     return {"messages": [response]}
-
-
-# def self_critic(state: MessagesState):
-#     global global_count
-#     messages = state["messages"]
-#     # if not messages or messages[0].type != "system":
-#     messages = [SystemMessage(content=self_critic_system_prompt)] + messages
-
-#     response = llm_with_tools.invoke(messages)
-#     global_count += 1
-#     return {"messages": [response]}
-
-# def loop_node(state: MessagesState) -> Literal["tools", "output"]:
-#     messages = state["messages"]
-#     last_message = messages[-1]
-#     print("Last:", last_message)  # ← .content not .text
-
-
-# try:
-#     import json
-#     critique = json.loads(last_message.content)
-#     print("Verdict:", critique["verdict"])
-#     if critique["verdict"] == "retry":
-#         return "output"
-#     else:
-#         return "output"
-# except Exception as e:
-#     print("Parse error:", e)
-#     return "output"
-
-
-# def intermediate_output_node(state: MessagesState):
-#     global global_count
-#     messages = state["messages"]
-#     if not messages or messages[0].type != "system":
-#         messages = [SystemMessage(content=output_system_prompt)] + messages
-
-#     response = llm_with_tools.invoke(messages)
-#     global_count += 1
-#     return {"messages": [response]}
 
 
 def visualizer(state: MessagesState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
-    # Claude requires conversation to end with a user message
     messages = messages + [
         HumanMessage(
-            content="Based on the results and the user's request, decide what dashboard actions to take. You can: render new visualizations with render_visualization, remove widgets with remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed."
+            content=(
+                "Based on the results and the user's request, decide what dashboard actions to take. "
+                "You can: render new visualizations with render_visualization, remove widgets with "
+                "remove_widget, or reorder the dashboard with reorder_dashboard. Take action as needed."
+            )
         )
     ]
     metrics = _message_metrics(messages)
@@ -715,324 +599,211 @@ def visualizer(state: MessagesState):
     )
     _dump_invoke_context("visualizer", messages)
     response = llm_visualizer.invoke(messages)
-    print("hi", response)
     tools_called = [tc["name"] for tc in getattr(response, "tool_calls", [])]
-    action_label = (
-        f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
-    )
+    action_label = f"calls tools: {', '.join(tools_called)}" if tools_called else "generates text"
     logger.info("[context-debug] visualizer action: %s", action_label)
     return {"messages": [response]}
 
 
 def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
-    messages = state["messages"]
-    last_message = messages[-1]
+    last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "visual_tool"
     return "output"
 
 
-memory = MemorySaver()
-
-system_prompt = ""
-output_system_prompt = ""
-visualizer_system_prompt = ""
-self_critic_system_prompt = ""
-
+# ---------------------------------------------------------------------------
+# Agent class
+# ---------------------------------------------------------------------------
 
 class Agent:
     def __init__(self, message, similar_text, dashboard_widgets=None):
-        self.message = message
-        self.similar_text = similar_text
+        self.message           = message
+        self.similar_text      = similar_text
         self.dashboard_widgets = dashboard_widgets or []
         self.tool_results: dict[str, dict] = {}
+
         similar_data = (
-            "you are given the following similar text from a vectordb: "
-            + self.similar_text
+            "You are given the following similar text from a vectordb: " + self.similar_text
         )
 
-        # Build dashboard context string
+        # ---- Dashboard context string ----------------------------------------
         dashboard_context = ""
         if self.dashboard_widgets:
             widget_descriptions = []
             for w in self.dashboard_widgets:
                 selected_marker = " ⭐ SELECTED" if w.get("selected") else ""
-                desc = f"- Widget '{w.get('title', 'Untitled')}' (id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, position: x={w.get('position', {}).get('x', 0)} y={w.get('position', {}).get('y', 0)} w={w.get('position', {}).get('w', 1)} h={w.get('position', {}).get('h', 1)}){selected_marker}"
+                desc = (
+                    f"- Widget '{w.get('title', 'Untitled')}' "
+                    f"(id: {w.get('id', '?')}, type: {w.get('chart_type', '?')}, "
+                    f"position: x={w.get('position', {}).get('x', 0)} "
+                    f"y={w.get('position', {}).get('y', 0)} "
+                    f"w={w.get('position', {}).get('w', 1)} "
+                    f"h={w.get('position', {}).get('h', 1)}){selected_marker}"
+                )
                 pts = w.get("selected_data_points", [])
                 if pts:
-                    import json as _json
-
-                    desc += f"\n  Selected data points: {_json.dumps(pts)}"
+                    desc += f"\n  Selected data points: {json.dumps(pts)}"
                 widget_descriptions.append(desc)
+
             selected_note = (
-                "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's question — focus analysis and modifications on these."
+                "\nSelected widgets (marked ⭐) are the PRIMARY context for the user's "
+                "question — focus analysis and modifications on these."
                 if any(w.get("selected") for w in self.dashboard_widgets)
                 else ""
             )
-            dashboard_context = f"""
+            dashboard_context = (
+                f"\n\nCURRENT DASHBOARD STATE:\n"
+                f"The user currently has {len(self.dashboard_widgets)} widget(s) on their dashboard:\n"
+                + "\n".join(widget_descriptions)
+                + f"\n{selected_note}\n"
+                "You can reference existing widgets when answering. If the user asks to rearrange "
+                "or reorganize the dashboard, you can create new visualizations that replace or "
+                "complement existing ones.\n"
+            )
 
-CURRENT DASHBOARD STATE:
-The user currently has {len(self.dashboard_widgets)} widget(s) on their dashboard:
-{chr(10).join(widget_descriptions)}
-{selected_note}
-You can reference existing widgets when answering. If the user asks to rearrange or reorganize the dashboard, you can create new visualizations that replace or complement existing ones.
-"""
+        # ---- Grab the DB context built at startup ----------------------------
+        # Falls back to a minimal placeholder if init_mcp_client hasn't run yet.
+        db_context = _db_context_string or "(DB context not yet loaded — call init_mcp_client first)"
 
-        be_professional = "Be very professional!"
+        # ---- System prompts --------------------------------------------------
+        global system_prompt, output_system_prompt, visualizer_system_prompt
 
-        global system_prompt, output_system_prompt, visualizer_system_prompt, self_critic_system_prompt
+        system_prompt = f"""You are an AI material testing assistant with MongoDB database access.
 
-        uuid = """UUIDs
-        In many areas of the Data you will stumble upon UUIDs. We tried to migrate them as best we could, but on some places they are still integral.
+{db_context}
 
-        Valuecolumns
-        this is the propably biggest source for UUIDs. The structure of a valucolumn entry, consist of two important metadatas: refId and childId
+AVAILABLE TOOLS:
 
-        refId is a reference to the source test _id
-        childId is id constructed by the `[test.valuecolumns._id].[test.valuecolumn.valuetableId]
-        The UUIDs in childId is a reference to the type of value stored there. In the repository you will find files containing translations for these UUIDs, as well as the possible unittables.
-        for Results (valuecolumn has only a single value), take a look at the file TestResultTypes
-        for Measurements, take a look at the channelParameterMap
-        some test.valuecolumn._id end with a _key - they can be safely ignored and weren't migrated into this test dataset"""
+MongoDB (from MCP server):
+- `find`              — Query documents with filters, projection, and sorting
+- `aggregate`         — Run aggregation pipelines
+- `collection-schema` — Understand collection structure
+- `list-collections`  — See available collections
+- `count`             — Count matching documents
 
-        system_prompt = (
-            """You are an AI material testing assistant with MongoDB database access.
+UUID resolution:
+- `resolve_childId`   — Resolve any childId or valuetableId UUID to its human-readable name
+  Always call this before referencing a channel or result type by UUID.
 
-        {DB_CONTEXT}
+IMPORTANT — data_id and tool result format:
+Every tool result is returned as a JSON object:
+  {{ "data_id": "<uuid>", "info": ["Found N documents."], "result": [...] }}
+If the payload exceeds the context limit, `result` is replaced by `summary` (truncated preview)
+but the full dataset remains accessible via `data_id`.
 
-        AVAILABLE TOOLS:
+Custom tools:
+- `run_python_analysis` — Execute Python (numpy/pandas/scipy) on retrieved data.
+    Accepts `data_json`, `data_id`, or `data_ids` (list).
+    Assign your final answer to `result`.
+- `render_visualization` — Display charts on the UI.
+    data_json must be FLAT records: [{{"label": "A", "value1": 10}}].
+    Use `data_id` only for already-flat aggregate results.
+- `render_text_block`    — Pin a Markdown summary to the dashboard.
+- `remove_widget`        — Remove a dashboard widget by id.
+- `reorder_dashboard`    — Reorder widgets by providing ids in desired order.
 
-        MongoDB (from MCP server):
-        - `find` - Query documents with filters, projection, and sorting
-        - `aggregate` - Run aggregation pipelines
-        - `collection-schema` - Understand collection structure
-        - `list-collections` - See available collections
-        - `count` - Count matching documents
+Statistical Analysis workflow:
+1. Use `find` or `aggregate` to retrieve raw data — note the `data_id`.
+2. Pass `data_id` into `run_python_analysis` (or use `data_json` for small payloads).
+3. For multi-dataset analysis pass multiple ids via `data_ids`; access each as `datasets["<id>"]`.
+4. Assign answer to `result`, then compose your natural-language response.
 
-        IMPORTANT — data_id and tool result format:
-        Every tool result is returned as a JSON object with these fields:
-        - `data_id` (UUID): Reference to the stored dataset. Pass this to `run_python_analysis` or
-          `render_visualization` instead of copying data into `data_json`.
-        - `info` (list of strings): Metadata/headers from the tool (e.g. "The aggregation resulted in 30 documents.").
-        - `result` (the actual data): The extracted query data as structured JSON (e.g. [{"name": "A", "count": 10}, ...]).
+ALWAYS call `render_visualization` when showing aggregated or statistical data.
+{similar_data}
+{dashboard_context}"""
 
-        Example response:
-        { "data_id": "6da86", "info": ["Found 30 documents."], "result": [{"name": "Probe 1", "count": 937}] }
+        output_system_prompt = f"""You are a material testing AI assistant.
 
-        If the data is too large, `result` is replaced by `summary` — a truncated preview:
-        { "data_id": "6da86", "info": ["Found 3505 documents."], "summary": [{"name": "Probe 1", "count": 937}, ..., "<TRUNCATED 3495 items>"] }
-        Even when summarized, the full dataset is stored and accessible via `data_id`.
-        Summaries truncate lists to 10 items, strings to 50 chars, and recurse into nested objects.
+Based on the tool results and analysis above:
+1. Write a clear, concise answer to the user's question.
+2. Suggest 3 follow-up hypotheses worth investigating if there are any (don't force it).
 
-        Custom tools:
-        - `run_python_analysis` - Execute Python (numpy/pandas/scipy) on retrieved data for statistical analysis
-            Accepts either `data_json` (raw JSON string), `data_id` (single previous MongoDB result),
-            or `data_ids` (list of data_ids from multiple previous MongoDB results).
-            When using `data_ids`, all datasets are available in the `datasets` dict (keyed by data_id),
-            and the first dataset is also set as `data`/`df` for convenience.
-            Works with any data shape — your Python code handles the structure.
-        - `render_visualization` - Display charts on the UI
-            Accepts an optional `data_id`, but ONLY when the referenced data is already FLAT
-            Recharts-compatible records (e.g. from an `aggregate` with `$project` that outputs
-            flat objects like [{"name": "A", "value": 10}]).
-            Do NOT pass data_id from raw `find` results — those are nested and will break the chart.
-            For nested data, either build data_json manually or use run_python_analysis to reshape first.
+Dashboard capabilities available to the user:
+- Charts (bar, line, area, pie, radar, boxplot) for data visualizations
+- Text/headline widgets with Markdown content (summaries, reports, key findings)
+Never tell the user that text or headline widgets are unsupported — they are fully supported.
+{similar_data}
+Be very professional!"""
 
-        Statistical Analysis workflow:
-        1. Use `find` or `aggregate` (or `get_sample_documents`) to retrieve raw data — note the `data_id` from each response
-        2. Pass the `data_id` into `run_python_analysis` (or pass the raw JSON as `data_json`)
-           For multi-dataset analysis (e.g. comparing two query results), pass multiple IDs via `data_ids`
-           and access them in code as `datasets["<id>"]`
-        3. Write a Python snippet that assigns the final answer to `result`
-        4. Use the returned `result` to compose your natural-language answer
+        visualizer_system_prompt = f"""You are CoMat, an AI material testing assistant.
+Inspect if the previous results benefit from a visualization and act accordingly.
 
-        Example — t-test between two groups:
-          code = \"\"\"
-          group_a = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_A']
-          group_b = [r['TestParametersFlat']['Upper force limit'] for r in data if r.get('TestParametersFlat', {}).get('CUSTOMER') == 'Company_B']
-          t, p = stats.ttest_ind(group_a, group_b)
-          result = {'t_statistic': float(t), 'p_value': float(p), 'significant': bool(p < 0.05)}
-          \"\"\"
+Use render_visualization for aggregated/statistical data — visualize whenever possible.
+Use render_text_block only when the user explicitly requests a written dashboard summary,
+or when structured textual findings add lasting dashboard value alongside charts.
+Use remove_widget / reorder_dashboard when the user asks to clean up or rearrange.
 
-        Example — trend / degradation over time:
-          code = \"\"\"
-          vals = [r['TestParametersFlat'].get('Upper force limit') for r in data if r.get('TestParametersFlat', {}).get('Upper force limit') is not None]
-          x = np.arange(len(vals))
-          slope, _, _, p, _ = stats.linregress(x, vals)
-          result = {'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}
-          \"\"\"
-        - `remove_widget` - Remove a widget from the dashboard by its ID
-        - `reorder_dashboard` - Reorder widgets on the dashboard by providing widget IDs in desired order
+Supported chart types: bar, area, line, pie, radar, radial, boxplot.
 
-        ALWAYS call `render_visualization` when showing aggregated or statistical data.
-        Data format for render_visualization must be FLAT records: [{"label": "A", "value1": 10, "value2": 20}, ...]
-        You can remove or reorder existing dashboard widgets when the user asks. Use the widget IDs from the CURRENT DASHBOARD STATE.
+data_json must be FLAT records. Examples:
+  bar/line/area : [{{"material": "Steel A", "tensile_strength": 420}}]
+  pie           : [{{"name": "Material A", "value": 42}}]
+  boxplot       : [{{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}}]
 
-        Dashboard also supports text/headline widgets via render_text_block (handled in a later step).
-        If the user asks for a text summary, report, or headline widget on the dashboard, it will be created.
-        """
-            + similar_data
-            + dashboard_context
-        )
+chart_config_json maps each numeric key → {{"label": "...", "color": "var(--chart-N)"}}.
+Use var(--chart-1) … var(--chart-5) as default colors; honour user-specified CSS color names.
+For pie/radial, set "fill" on each data record.
 
-        output_system_prompt = (
-            """You are a material testing AI assistant.
+widget_size (HxW):
+  "1x1" — single KPI / simple pie (≤5 slices)
+  "1x2" — standard wide (DEFAULT)
+  "2x1" — tall narrow / vertical ranked lists
+  "2x2" — complex multi-series / boxplots with many groups
 
-        Based on the tool results and analysis above:
-        1. Write a clear, concise answer to the user's question
-        2. After your answer, suggest 3 follow-up hypotheses worth investigating if there are any. Don't always force it.
+If a SELECTED widget (⭐) is targeted, pass its id as replace_widget_id.
+{similar_data}
+{dashboard_context}"""
 
-        Dashboard capabilities available to the user:
-        - Charts (bar, line, area, pie, radar, boxplot) for data visualizations
-        - Tables for tabular data
-        - KPI cards for key metrics
-        - Text/headline widgets with Markdown content (summaries, reports, key findings)
-        Never tell the user that text or headline widgets are unsupported — they are fully supported.
-        """
-            + similar_data
-            + be_professional
-        )
-
-        intermediate_output_system_prompt = (
-            """briefly summarize the findings
-        """
-            + similar_data
-        )
-
-        self_critic_system_prompt = (
-            """You are a critical reviewer of material testing analysis.
-
-        Review the previous conversation history and output ONLY a JSON object:
-        {
-        "verdict": "accept|retry",
-        "confidence": "high|medium|low",
-        "text": "The verdict you made and why you made this verdict",
-        "missing_data": "what tool should be called to improve the answer, or null",
-        "tool_to_call": "search_tests|get_aggregated_data_for_chart|null",
-        "tool_args": {...} or null,
-        "caveats": ["caveat 1", "caveat 2"]
-        }
-
-        Verdict rules:
-        - accept: answer is well supported by data
-        - retry: answer needs more data, specify which tool to call
-        - escalate: query is too complex, needs deeper analysis
-        """
-            + similar_data
-        )
-
-        visualizer_system_prompt = (
-            """You are CoMat, an AI material testing assistant.
-        You should inspect if the previous results would benefit from a visualization. If you want to visualize
-        use the render_visualization function to visualize the data. Visualize if possible!
-        Render a chart on the user's dashboard.
-        ALWAYS call this when displaying aggregated/statistical data.
-
-        You can also manage the dashboard:
-        - `remove_widget(widget_id)` — Remove a widget the user no longer wants
-        - `reorder_dashboard(widget_ids)` — Reorder widgets in the desired display order
-        Use these when the user asks to rearrange, clean up, or remove charts from their dashboard.
-
-        Supported chart types: 'bar', 'area', 'line', 'pie', 'radar', 'radial', 'boxplot'.
-
-        IMPORTANT: data_json must be FLAT records. Each record is a plain object with a label/category key and numeric value keys.
-        Example for bar/line/area: [{"material": "Steel A", "tensile_strength": 420, "yield_strength": 380}, ...]
-        Example for pie: [{"name": "Material A", "value": 42}, {"name": "Material B", "value": 58}]
-        Example for boxplot: [{"name": "Material A", "min": 350, "q1": 380, "median": 410, "q3": 440, "max": 470}]
-        Boxplot records MUST have: min, q1, median, q3, max. Optionally "outliers" (array of numbers).
-
-        chart_config_json maps each numeric key to its display label and color:
-        {"tensile_strength": {"label": "Tensile Strength (MPa)", "color": "var(--chart-1)"}, "yield_strength": {"label": "Yield Strength (MPa)", "color": "var(--chart-2)"}}
-
-        Use var(--chart-1) through var(--chart-5) for default colors.
-        If the user mentions specific colors (e.g. "red and blue"), use those CSS color names directly.
-        For pie/radial charts, set "fill" on each data record: [{"name": "Red", "value": 50, "fill": "red"}]
-        Use boxplot for comparing distributions (e.g. tensile strength across materials, comparing machines).
-        If not, still call the function with none values.
-
-        WIDGET SIZE — choose widget_size based on data complexity (format is HxW, rows × columns):
-        "1x1" — compact single cell: single KPI metric, simple pie chart with ≤5 slices
-        "1x2" — standard wide (DEFAULT): most bar, line, area charts; 2–8 categories
-        "2x1" — tall narrow: vertical ranked bar charts, long label lists, histograms
-        "2x2" — large square: multi-series comparisons, boxplots with many groups (>6), scatter plots, complex time-series with many data points
-        When in doubt, default to "1x2".
-
-        MODIFYING EXISTING CHARTS:
-        If the user's request is about changing, updating, or modifying a SELECTED widget (marked ⭐),
-        pass that widget's id as `replace_widget_id` to render_visualization.
-        The chart will be updated in-place instead of creating a new one.
-        Example: user says "change that to a bar chart" while a pie chart is selected → set replace_widget_id to that widget's id.
-
-        TEXT BLOCKS:
-        Use render_text_block when:
-        - The user explicitly asks for a text block, summary, report, or written content on the dashboard, OR
-        - Structured textual content (key findings, analysis summaries, methodology notes) genuinely benefits
-          from being pinned to the dashboard alongside charts.
-        Do NOT create a text block unprompted for every response — only when it adds lasting dashboard value.
-        Never use a text block instead of a chart or table when data visualization is more appropriate.
-        Use Markdown: ## for major sections, ### for subsections, **bold** for emphasis, bullet lists for findings."""
-            + similar_data
-            + dashboard_context
-        )
-
-        request_metrics = _text_metrics(self.message)
-        similar_metrics = _text_metrics(self.similar_text)
-        dashboard_metrics = _text_metrics(dashboard_context)
-        system_metrics = _text_metrics(system_prompt)
-        output_metrics = _text_metrics(output_system_prompt)
-        visualizer_metrics = _text_metrics(visualizer_system_prompt)
-        logger.info(
-            "[context-debug] prompt build: request_chars=%s similar_chars=%s dashboard_chars=%s widgets=%s",
-            request_metrics["chars"],
-            similar_metrics["chars"],
-            dashboard_metrics["chars"],
-            len(self.dashboard_widgets),
-        )
-        logger.info(
-            "[context-debug] prompt build: system_chars=%s output_chars=%s visualizer_chars=%s",
-            system_metrics["chars"],
-            output_metrics["chars"],
-            visualizer_metrics["chars"],
-        )
-
+        # ---- Debug dump -------------------------------------------------------
         import time
-        import os
-        import json
-
         debug_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "debug_contexts"
         )
         os.makedirs(debug_dir, exist_ok=True)
-        query_id = str(int(time.time() * 1000))
+        query_id   = str(int(time.time() * 1000))
         debug_file = os.path.join(debug_dir, f"query_{query_id}.json")
         try:
             with open(debug_file, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "user_message": self.message,
-                        "similar_text": self.similar_text,
-                        "dashboard_widgets": self.dashboard_widgets,
-                        "system_prompt": system_prompt,
-                        "output_system_prompt": output_system_prompt,
+                        "user_message":           self.message,
+                        "similar_text":           self.similar_text,
+                        "dashboard_widgets":      self.dashboard_widgets,
+                        "system_prompt":          system_prompt,
+                        "output_system_prompt":   output_system_prompt,
                         "visualizer_system_prompt": visualizer_system_prompt,
                     },
-                    f,
-                    indent=2,
-                    ensure_ascii=False,
+                    f, indent=2, ensure_ascii=False,
                 )
         except Exception as e:
-            logger.error(f"Failed to dump debug context: {e}")
+            logger.error("Failed to dump debug context: %s", e)
+
+        # ---- Metrics ---------------------------------------------------------
+        logger.info(
+            "[context-debug] prompt build: request_chars=%s similar_chars=%s dashboard_chars=%s widgets=%s",
+            len(self.message), len(self.similar_text), len(dashboard_context),
+            len(self.dashboard_widgets),
+        )
+        logger.info(
+            "[context-debug] prompt build: system_chars=%s output_chars=%s visualizer_chars=%s db_context_chars=%s",
+            len(system_prompt), len(output_system_prompt),
+            len(visualizer_system_prompt), len(db_context),
+        )
+
+    # -------------------------------------------------------------------------
+    # Summarisation helpers
+    # -------------------------------------------------------------------------
 
     MAX_ITERABLE_SUMMARY_COUNT = 10
-    MAX_STRING_SUMMARY_LENGTH = 50
+    MAX_STRING_SUMMARY_LENGTH  = 50
 
     def _summarize_json(self, object):
-        # alter json object recursively by limiting size of list objects
         if isinstance(object, str):
             if len(object) > self.MAX_STRING_SUMMARY_LENGTH:
                 return (
                     object[: self.MAX_STRING_SUMMARY_LENGTH]
-                    + f"... <TRUNCATED {len(object)-self.MAX_STRING_SUMMARY_LENGTH} characters>"
+                    + f"... <TRUNCATED {len(object) - self.MAX_STRING_SUMMARY_LENGTH} characters>"
                 )
             return object
         if isinstance(object, list):
@@ -1042,7 +813,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
             ]
             if len(object) > self.MAX_ITERABLE_SUMMARY_COUNT:
                 summarized.append(
-                    f"<TRUNCATED {len(object)-self.MAX_ITERABLE_SUMMARY_COUNT} items>"
+                    f"<TRUNCATED {len(object) - self.MAX_ITERABLE_SUMMARY_COUNT} items>"
                 )
             return summarized
         if isinstance(object, dict):
@@ -1053,31 +824,19 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
     @staticmethod
     def _extract_mcp_data(structured_data):
-        """Extract headers and actual data payload from MCP content blocks.
-
-        MCP tools return content as a list of text blocks where the actual query
-        data is embedded inside <untrusted-user-data-*> tags in one of the blocks.
-        Other blocks contain header info (e.g. "Found 30 documents.").
-
-        Returns (headers: list[str], data: any):
-          - headers: text from non-data content blocks
-          - data: the parsed JSON payload, or the original input if extraction fails
-        """
+        """Extract headers and actual data payload from MCP content blocks."""
         import re
 
         if not isinstance(structured_data, list):
             return [], structured_data
-        headers = []
+
+        headers       = []
         extracted_data = None
         for block in structured_data:
             if not isinstance(block, dict) or block.get("type") != "text":
                 continue
             text = block.get("text", "")
             if extracted_data is None:
-                # Try all regex matches — the WARNING preamble contains the tag
-                # names as plain text, so the first match may capture junk like
-                # "and" instead of the real data.  Iterate until we find one
-                # that parses as valid JSON.
                 found = False
                 for match in re.finditer(
                     r"<untrusted-user-data-[^>]+>\s*(.*?)\s*</untrusted-user-data-[^>]+>",
@@ -1094,21 +853,20 @@ You can reference existing widgets when answering. If the user asks to rearrange
                     headers.append(text)
             else:
                 headers.append(text)
+
         if extracted_data is not None:
             return headers, extracted_data
         return headers, structured_data
 
     async def _wrap_tool_node(self, state: MessagesState):
-        """Wrap tool_node to intercept and store MCP tool results."""
+        """Intercept tool_node results, store them, and inject data_id metadata."""
         global _active_tool_results
-        # Keep module-level reference in sync so @tool functions can resolve data_ids
         _active_tool_results = self.tool_results
+
         result = await tool_node.ainvoke(state)
         for msg in result.get("messages", []):
-            tool_name = getattr(msg, "name", None)
             result_id = str(uuid.uuid4())
-            # Parse content and extract actual data from MCP content blocks.
-            content = msg.content
+            content   = msg.content
             if isinstance(content, str):
                 try:
                     structured_data = json.loads(content)
@@ -1117,57 +875,49 @@ You can reference existing widgets when answering. If the user asks to rearrange
             else:
                 structured_data = content
 
-            # Extract headers (e.g. "Found 30 documents.") and the actual data payload
             headers, extracted = self._extract_mcp_data(structured_data)
             self.tool_results[result_id] = {
-                "tool_name": tool_name,
+                "tool_name":    getattr(msg, "name", None),
                 "tool_call_id": getattr(msg, "tool_call_id", None),
-                "data": extracted,
+                "data":         extracted,
             }
 
-            # Build clean LLM-facing content with headers + data (or summary)
             extracted_json = json.dumps(extracted)
             if len(extracted_json) > self.MAX_CONTEXT_RESULT_SIZE:
                 data_for_llm = self._summarize_json(extracted)
-                print(
-                    "JSON SUMMARY: Reduced tool result from",
-                    len(extracted_json),
-                    "chars to",
-                    len(json.dumps(data_for_llm)),
-                    "chars",
+                logger.info(
+                    "JSON SUMMARY: Reduced tool result from %d chars to %d chars",
+                    len(extracted_json), len(json.dumps(data_for_llm)),
                 )
-                llm_content = {
-                    "data_id": result_id,
-                    "info": headers,
-                    "summary": data_for_llm,
-                }
+                llm_content = {"data_id": result_id, "info": headers, "summary": data_for_llm}
             else:
-                llm_content = {
-                    "data_id": result_id,
-                    "info": headers,
-                    "result": extracted,
-                }
+                llm_content = {"data_id": result_id, "info": headers, "result": extracted}
+
             msg.content = json.dumps(llm_content)
         return result
 
+    # -------------------------------------------------------------------------
+    # Graph construction
+    # -------------------------------------------------------------------------
+
     def build_agent(self):
-        """Build the agent graph. Called after MCP tools are initialized."""
         graph_builder = StateGraph(MessagesState)
-        graph_builder.add_node("agent", call_model)
-        graph_builder.add_node("tools", self._wrap_tool_node)
-        graph_builder.add_node("visualizer", visualizer)
+        graph_builder.add_node("agent",       call_model)
+        graph_builder.add_node("tools",       self._wrap_tool_node)
+        graph_builder.add_node("visualizer",  visualizer)
         graph_builder.add_node("visual_tool", visualization_tool)
-        graph_builder.add_node("output", output_node)
+        graph_builder.add_node("output",      output_node)
         graph_builder.add_node("submit_tool", submit_tool)
+
         graph_builder.add_edge(START, "agent")
-        graph_builder.add_conditional_edges("agent", should_continue)
-        graph_builder.add_edge("tools", "agent")
+        graph_builder.add_conditional_edges("agent",      should_continue)
+        graph_builder.add_edge("tools",      "agent")
         graph_builder.add_conditional_edges("visualizer", has_visual)
         graph_builder.add_edge("visual_tool", "output")
-        graph_builder.add_edge("output", "submit_tool")
+        graph_builder.add_edge("output",      "submit_tool")
         graph_builder.add_edge("submit_tool", END)
+
         return graph_builder.compile(checkpointer=memory)
 
     def create(self):
-        agent = self.build_agent()
-        return agent
+        return self.build_agent()

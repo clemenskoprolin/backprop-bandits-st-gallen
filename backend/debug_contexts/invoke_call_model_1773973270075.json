@@ -1,0 +1,178 @@
+{
+  "node": "call_model",
+  "messages": [
+    {
+      "type": "SystemMessage",
+      "content": "You are an AI material testing assistant with MongoDB database access.\n\n\n## Database overview\n\nThree collections in MongoDB (all field names are CASE-SENSITIVE):\n\n| Collection               | Purpose                                        |\n|--------------------------|------------------------------------------------|\n| `_tests`                 | Primary test records — parameters + metadata  |\n| `valuecolumns_migrated`  | Time-series float arrays (one doc per channel) |\n| `unittables_new`         | Unit definitions referenced by value columns   |\n\n---\n\n## `_tests` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### TestParametersFlat — all keys present in sample document\n\nThese are the queryable measurement parameters. All key names are CASE-SENSITIVE.\n\n(could not fetch TestParametersFlat keys: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### valuecolumns array — item shape\n\nEach entry in the `valuecolumns` array has these fields:\n  _id          : string UUID  — ignore entries ending with `_key`\n  valuetableId : UUID         — resolves to a channel or result type (see UUID tables)\n  refId        : ObjectId     — back-reference to this test's _id\n  childId      : string       — composite: \"<valuecolumn._id>.<valuetableId>\"\n\n---\n\n## `valuecolumns_migrated` — field schema (live, from sample document)\n\nOne document per migrated channel per test. The `values` array is omitted here\n— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed.\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### JOIN PATTERN — fetching time-series data for a test\n\nStep 1: Query `_tests` for the test document.\n        Note: test._id (as string) and the valuecolumn entry where\n        valuetableId matches the channel UUID you need.\n\nStep 2: Query `valuecolumns_migrated`:\n        { \"refId\": \"<test._id as string>\",\n           \"childId\": { \"$regex\": \"<valuecolumn._id>\" } }\n\nStep 3: Read `.values[]` — raw float64 samples in chronological order.\n\nNote: `refId` is stored as a STRING in valuecolumns_migrated, not as ObjectId.\n\n---\n\n## `unittables_new` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n---\n\n## UUID reference tables\n\n`valuetableId` in `_tests.valuecolumns` resolves to either a measurement channel\n(time-series) or a result type (single scalar value).\n\nUse the `resolve_childId` tool at query time to look up any UUID you encounter.\nThe tables below are a static reference (first 40 entries each).\n\n### channelParameterMap — measurement channels (time-series)\n\n  (no channelParameterMap loaded)\n\n### TestResultTypes — scalar result types\n\n  (no TestResultTypes loaded)\n\n---\n\n## Query rules (follow strictly)\n\n1. Field names are CASE-SENSITIVE. `SPECIMEN_TYPE` ≠ `specimen_type`.\n   A wrong field name returns empty results silently — not an error.\n\n2. Use `resolve_childId` whenever you see a childId or valuetableId UUID.\n   Never guess the channel name from the UUID string.\n\n3. `valuecolumn._id` entries ending with `_key` were NOT migrated — skip them.\n\n4. `refId` in `valuecolumns_migrated` is a string. Match it as a string:\n   {\"refId\": \"{D1CB87C7-...}\"}  ← correct\n   {\"refId\": ObjectId(\"...\")}      ← wrong\n\n5. Fields with spaces are valid: `TestParametersFlat.Upper force limit`\n\n6. Never load the full `values` array unless you specifically need the\n   time-series data. Use `valuesCount` to check length first.\n\n\nAVAILABLE TOOLS:\n\nMongoDB (from MCP server):\n- `find`              — Query documents with filters, projection, and sorting\n- `aggregate`         — Run aggregation pipelines\n- `collection-schema` — Understand collection structure\n- `list-collections`  — See available collections\n- `count`             — Count matching documents\n\nUUID resolution:\n- `resolve_childId`   — Resolve any childId or valuetableId UUID to its human-readable name\n  Always call this before referencing a channel or result type by UUID.\n\nIMPORTANT — data_id and tool result format:\nEvery tool result is returned as a JSON object:\n  { \"data_id\": \"<uuid>\", \"info\": [\"Found N documents.\"], \"result\": [...] }\nIf the payload exceeds the context limit, `result` is replaced by `summary` (truncated preview)\nbut the full dataset remains accessible via `data_id`.\n\nCustom tools:\n- `run_python_analysis` — Execute Python (numpy/pandas/scipy) on retrieved data.\n    Accepts `data_json`, `data_id`, or `data_ids` (list).\n    Assign your final answer to `result`.\n- `render_visualization` — Display charts on the UI.\n    data_json must be FLAT records: [{\"label\": \"A\", \"value1\": 10}].\n    Use `data_id` only for already-flat aggregate results.\n- `render_text_block`    — Pin a Markdown summary to the dashboard.\n- `remove_widget`        — Remove a dashboard widget by id.\n- `reorder_dashboard`    — Reorder widgets by providing ids in desired order.\n\nStatistical Analysis workflow:\n1. Use `find` or `aggregate` to retrieve raw data — note the `data_id`.\n2. Pass `data_id` into `run_python_analysis` (or use `data_json` for small payloads).\n3. For multi-dataset analysis pass multiple ids via `data_ids`; access each as `datasets[\"<id>\"]`.\n4. Assign answer to `result`, then compose your natural-language response.\n\nALWAYS call `render_visualization` when showing aggregated or statistical data.\nYou are given the following similar text from a vectordb: \n"
+    },
+    {
+      "type": "HumanMessage",
+      "content": "Show me all tensile tests we have done for customer Company_1"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "I'll look up all tensile tests for customer Company_1 in the database. Let me query the `_tests` collection.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_015egmZCtRakLr693twh515h",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.Customer\":\"Company_1\",\"TestParametersFlat.TestType\":\"Tensile\"}, \"limit\": 100}"
+        },
+        {
+          "id": "toolu_01JLny5hPaLxyTfQMktqzcBp",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "count",
+          "type": "tool_use",
+          "index": 2,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\", \"query\": {\"TestParametersFlat.Customer\":\"Company_1\",\"TestParametersFlat.TestType\":\"Tensile\"}}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"29ffc2b7-6711-4a3c-8831-371772cf0fee\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\"], \"result\": [{\"type\": \"text\", \"text\": \"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\", \"id\": \"lc_371793bf-eecf-4f4d-a6fe-abbe1089fc96\"}]}"
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"8c3ff114-b211-4c34-943e-656e5c36d795\", \"info\": [\"Found 0 documents in the collection \\\"_tests\\\" that matched the query.\"], \"result\": [{\"type\": \"text\", \"text\": \"Found 0 documents in the collection \\\"_tests\\\" that matched the query.\", \"id\": \"lc_c146015e-80d9-4c64-9921-f8248d585df8\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "No results found with those exact field names. Let me explore the schema to find the correct field names for customer and test type.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01AkqAahAU8T8Hm3BkHhudEr",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"0182c1df-071e-4e8c-984d-1cbc8f5b9e7b\", \"info\": [\"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\"], \"result\": [{\"type\": \"text\", \"text\": \"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\", \"id\": \"lc_1f9fa059-d7ff-4ea5-bda6-0823b03a6e21\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_013pVqk8KXUHGZub5v6LqWtt",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "list-databases",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": ""
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"f6261625-7429-488f-b4e1-a0c3dbff6335\", \"info\": [\"Found 4 databases:\"], \"result\": [{\"name\": \"admin\", \"size\": 102400}, {\"name\": \"config\", \"size\": 114688}, {\"name\": \"local\", \"size\": 65536}, {\"name\": \"txp_clean\", \"size\": 45033590784}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01JD4i9gxhX88UvPhHjnNJwB",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "list-collections",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"database\": \"txp_clean\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"65f18a63-fb44-4702-b406-4f564b7e9d7b\", \"info\": [\"Found 4 collections for database \\\"txp_clean\\\".\"], \"result\": [{\"name\": \"_tests\"}, {\"name\": \"unittables_new\"}, {\"name\": \"valuecolumns_migrated\"}, {\"name\": \"translations\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_017hmUSKj2BXZ6rWXLyTNpRq",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"filter\": {}, \"limit\": 2}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"94d9de12-0bae-4297-ba99-c7d2d16e4d08\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 31099 documents. Returning 2 documents.\"], \"summary\": [{\"_id\": \"{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}\", \"clientAppType\": \"testXpert III\", \"state\": \"finishedOK\", \"tags\": [\"{B9D90822-09A8-4eab-871B-70FD0C1B4CD3}\"], \"version\": \"2.1772195387.0\", \"valueColumns\": [{\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 44815}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4599, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 44815}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 44815}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, \"<TRUNCATED 564 items>\"], \"hasMachineConfigurationInfo\": false, \"testProgramId\": \"TestProgram_2\", \"testProgramVersion\": \"2.1772195387.0\", \"name\": \"01\", \"modifiedOn\": {}, \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"Wall thickness\": 0.002, \"SPECIMEN_THICKNESS\": 0.001925, \"SPECIMEN_WIDTH\": 0.015075, \"Diameter\": 0.00011, \"Outer diameter\": 0.1, \"Inner diameter\": 0.008, \"Fineness\": 1e-05, \"Density of the specimen material\": 1000, \"Weight of the specimen\": 0.001, \"Total length of the specimen\": 0.1, \"Cross-section input\": 1e-06, \"Parallel specimen length\": 0.1, \"Marked initial gage length\": 0.08, \"Mass per unit area of the specimen\": 0.08, \"TEST_SPEED\": 3.33333333333e-05, \"Date\": \"26.11.2021\", \"Upper force limit\": 3000, \"Maximum extension\": 0.005, \"Cross-section correction factor\": 1, \"Negative cross-section correction value\": 0, \"Grip to grip separation at the start position\": 0.1227327709145275, \"Type of Young's modulus determination\": 1, \"Begin of Young's modulus determination\": 0.0005, \"End of Young's modulus determination\": 0.0025, \"Force shutdown threshold\": 20, \"Gage length, fine strain\": 0.02, \"Speed, Young's modulus\": 1.66666666667e-05, \"Speed, point of load removal\": 0.0008333333333333, \"Speed, yield point\": 1.66666666667e-05, \"Max. permissible force at end of test\": 250, \"Tube definition\": 2, \"Travel preset x1%\": 0.01, \"Travel preset x2%\": 0.02, \"Young's modulus preset\": 210000000000, \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"MACHINE_DATA\": \"Werknr. 104047\", \"Travel preset x3%\": 0.03, \"Travel preset x4%\": 0.04, \"Travel preset x5%\": 0.05, \"Travel preset x6%\": 0.06, \"SPECIMEN_TYPE\": \"IPS\", \"Headline for the report\": \"Pr\\u00fcfprotokoll\", \"Clock time\": \"09:42:38\", \"Date/Clock time\": \"2021-11-26T09:42:38+01:00\", \"Gage length after break\": 0.12, \"Diameter 1 after break\": 0.002, \"Diameter 2 after break\": 0.009, \"Specimen thickness after break\": 0.002, \"Specimen width after break\": 0.005, \"Cross-section after break\": 0}}, {\"_id\": \"{80A0F677-89BE-46e2-9F16-59409E96D8B6}\", \"clientAppType\": \"testXpert III\", \"state\": \"finishedOK\", \"tags\": [\"{B9D90822-09A8-4eab-871B-70FD0C1B4CD3}\"], \"version\": \"2.1772195394.0\", \"valueColumns\": [{\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 48865}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{E4C21909-B178-4fdc-8662-A13B4C7FF756}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain / Deformation\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4989, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 48865}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 14 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Ratio\", \"valueTableId\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 10 characters>\", \"_id\": \"{F4640D35-9098-4f57-B5F7-D999DAC7D0DF}-Zwick.Unitt... <TRUNCATED 16 characters>\", \"name\": \"Strain (plastic)\", \"modifiedOn\": {}}, {\"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 21 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, {\"segments\": [{\"fromKey\": 4, \"label\": \"valid\", \"source\": \"testprogram\", \"toKey\": 48865}], \"unitTableId\": \"Zwick.Unittable.Displacement\", \"valueTableId\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 17 characters>\", \"_id\": \"{0CC4A780-F198-449d-B262-31645567A06F}-Zwick.Unitt... <TRUNCATED 23 characters>\", \"name\": \"Strain (x-corrected)\", \"modifiedOn\": {}}, \"<TRUNCATED 564 items>\"], \"hasMachineConfigurationInfo\": false, \"testProgramId\": \"TestProgram_2\", \"testProgramVersion\": \"2.1772195394.0\", \"name\": \"03\", \"modifiedOn\": {}, \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"Wall thickness\": 0.002, \"SPECIMEN_THICKNESS\": 0.0019663333333333, \"SPECIMEN_WIDTH\": 0.0150083333333333, \"Diameter\": 0.00011, \"Outer diameter\": 0.1, \"Inner diameter\": 0.008, \"Fineness\": 1e-05, \"Density of the specimen material\": 1000, \"Weight of the specimen\": 0.001, \"Total length of the specimen\": 0.1, \"Cross-section input\": 1e-06, \"Parallel specimen length\": 0.1, \"Marked initial gage length\": 0.08, \"Mass per unit area of the specimen\": 0.08, \"TEST_SPEED\": 3.33333333333e-05, \"Date\": \"26.11.2021\", \"Upper force limit\": 3000, \"Maximum extension\": 0.005, \"Cross-section correction factor\": 1, \"Negative cross-section correction value\": 0, \"Grip to grip separation at the start position\": 0.1227327709145275, \"Type of Young's modulus determination\": 1, \"Begin of Young's modulus determination\": 0.0005, \"End of Young's modulus determination\": 0.0025, \"Force shutdown threshold\": 20, \"Gage length, fine strain\": 0.02, \"Speed, Young's modulus\": 1.66666666667e-05, \"Speed, point of load removal\": 0.0008333333333333, \"Speed, yield point\": 1.66666666667e-05, \"Max. permissible force at end of test\": 250, \"Tube definition\": 2, \"Travel preset x1%\": 0.01, \"Travel preset x2%\": 0.02, \"Young's modulus preset\": 210000000000, \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"MACHINE_DATA\": \"Werknr. 104047\", \"Travel preset x3%\": 0.03, \"Travel preset x4%\": 0.04, \"Travel preset x5%\": 0.05, \"Travel preset x6%\": 0.06, \"SPECIMEN_TYPE\": \"IPS\", \"Headline for the report\": \"Pr\\u00fcfprotokoll\", \"Clock time\": \"11:30:28\", \"Date/Clock time\": \"2021-11-26T11:30:28+01:00\", \"Gage length after break\": 0.12, \"Diameter 1 after break\": 0.002, \"Diameter 2 after break\": 0.009, \"Specimen thickness after break\": 0.002, \"Specimen width after break\": 0.005, \"Cross-section after break\": 0}}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "Now I can see the correct field names: `CUSTOMER` and `TYPE_OF_TESTING_STR`. Let me now fetch all tensile tests for Company_1.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_0198WBMht5EZVJ2GQf6bvNME",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.CUSTOMER\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":\"tensile\"}, \"projection\": {\"_id\":1,\"name\":1,\"state\":1,\"testProgramId\":1,\"TestParametersFlat.CUSTOMER\":1,\"TestParametersFlat.TYPE_OF_TESTING_STR\":1,\"TestParametersFlat.SPECIMEN_TYPE\":1,\"TestParametersFlat.STANDARD\":1,\"TestParametersFlat.TESTER\":1,\"TestParametersFlat.JOB_NO\":1,\"TestParametersFlat.Date\":1,\"TestParametersFlat.Date/Clock time\":1,\"TestParametersFlat.SPECIMEN_THICKNESS\":1,\"TestParametersFlat.SPECIMEN_WIDTH\":1,\"TestParametersFlat.MACHINE_TYPE_STR\":1,\"TestParametersFlat.NOTES\":1}, \"limit\": 200}"
+        },
+        {
+          "id": "toolu_01Kjwxqz6s9h7bXg99vUkufP",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "count",
+          "type": "tool_use",
+          "index": 2,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"query\": {\"TestParametersFlat.CUSTOMER\":\"Company_1\",\"TestParametersFlat.TYPE_OF_TESTING_STR\":\"tensile\"}}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"55df8a25-5422-49e4-b282-b8d10a51dae1\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 17110 documents. Returning 100 documents while respecting the applied limits of server's configured - maxDocumentsPerQuery. Note to LLM: If the entire query result is required then use \\\"export\\\" tool to export the query results.\"], \"summary\": [{\"_id\": \"{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"01\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.001925, \"SPECIMEN_WIDTH\": 0.015075, \"Date\": \"26.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-26T09:42:38+01:00\"}}, {\"_id\": \"{80A0F677-89BE-46e2-9F16-59409E96D8B6}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"03\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.0019663333333333, \"SPECIMEN_WIDTH\": 0.0150083333333333, \"Date\": \"26.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-26T11:30:28+01:00\"}}, {\"_id\": \"{7E90DD48-4CA9-407e-B6AA-15DFAE6530E3}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"02\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.001968, \"SPECIMEN_WIDTH\": 0.0150133333333333, \"Date\": \"26.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-26T11:03:12+01:00\"}}, {\"_id\": \"{C8354D0E-CB10-4025-8C3D-05530844E49C}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"05\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.0020043333333333, \"SPECIMEN_WIDTH\": 0.0150056666666667, \"Date\": \"30.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-30T14:03:14+01:00\"}}, {\"_id\": \"{DC5C3032-7A8B-4cd5-BC26-81D30EB13109}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"06\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.002015, \"SPECIMEN_WIDTH\": 0.0149803333333333, \"Date\": \"30.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-30T14:37:19+01:00\"}}, {\"_id\": \"{AAEDAC91-8CE7-4ca4-97DA-803134393FAB}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"07\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.002004, \"SPECIMEN_WIDTH\": 0.014954, \"Date\": \"30.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-30T14:57:07+01:00\"}}, {\"_id\": \"{840F253E-4CAC-466b-B4FE-AA20BF6A78AB}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"04\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.0019726666666667, \"SPECIMEN_WIDTH\": 0.01496, \"Date\": \"30.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-30T13:21:37+01:00\"}}, {\"_id\": \"{377786C3-8F1D-4113-BE3D-A91EC7EDE7F7}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"09\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach ClipOn Punkten\", \"SPECIMEN_THICKNESS\": 0.0019153333333333, \"SPECIMEN_WIDTH\": 0.0149823333333333, \"Date\": \"30.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-30T15:14:41+01:00\"}}, {\"_id\": \"{838EFCBD-58BA-45eb-9373-2572276E468D}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"01\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach DMS Punkten\", \"SPECIMEN_THICKNESS\": 0.001925, \"SPECIMEN_WIDTH\": 0.015075, \"Date\": \"26.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-26T09:42:38+01:00\"}}, {\"_id\": \"{40C6597C-22D0-4af0-AA73-7E9E5B0E18E4}\", \"state\": \"finishedOK\", \"testProgramId\": \"TestProgram_2\", \"name\": \"03\", \"TestParametersFlat\": {\"TYPE_OF_TESTING_STR\": \"tensile\", \"MACHINE_TYPE_STR\": \"Static\", \"STANDARD\": \"DIN EN \", \"TESTER\": \"Tester_1\", \"NOTES\": \"Auswertung E-Modul nach DMS Punkten\", \"SPECIMEN_THICKNESS\": 0.0019663333333333, \"SPECIMEN_WIDTH\": 0.0150083333333333, \"Date\": \"26.11.2021\", \"JOB_NO\": \"11918\", \"CUSTOMER\": \"Company_1\", \"SPECIMEN_TYPE\": \"IPS\", \"Date/Clock time\": \"2021-11-26T11:30:28+01:00\"}}, \"<TRUNCATED 90 items>\"]}"
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"4cc33356-c77b-402f-a813-b0faa7bc4cdd\", \"info\": [\"Found 17110 documents in the collection \\\"_tests\\\" that matched the query.\"], \"result\": [{\"type\": \"text\", \"text\": \"Found 17110 documents in the collection \\\"_tests\\\" that matched the query.\", \"id\": \"lc_e160cae0-269f-4acc-8b91-ca5d1dd82472\"}]}"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "node": "call_model",
+  "messages": [
+    {
+      "type": "SystemMessage",
+      "content": "You are an AI material testing assistant with MongoDB database access.\n\n\n## Database overview\n\nThree collections in MongoDB (all field names are CASE-SENSITIVE):\n\n| Collection               | Purpose                                        |\n|--------------------------|------------------------------------------------|\n| `_tests`                 | Primary test records — parameters + metadata  |\n| `valuecolumns_migrated`  | Time-series float arrays (one doc per channel) |\n| `unittables_new`         | Unit definitions referenced by value columns   |\n\n---\n\n## `_tests` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### TestParametersFlat — all keys present in sample document\n\nThese are the queryable measurement parameters. All key names are CASE-SENSITIVE.\n\n(could not fetch TestParametersFlat keys: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### valuecolumns array — item shape\n\nEach entry in the `valuecolumns` array has these fields:\n  _id          : string UUID  — ignore entries ending with `_key`\n  valuetableId : UUID         — resolves to a channel or result type (see UUID tables)\n  refId        : ObjectId     — back-reference to this test's _id\n  childId      : string       — composite: \"<valuecolumn._id>.<valuetableId>\"\n\n---\n\n## `valuecolumns_migrated` — field schema (live, from sample document)\n\nOne document per migrated channel per test. The `values` array is omitted here\n— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed.\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### JOIN PATTERN — fetching time-series data for a test\n\nStep 1: Query `_tests` for the test document.\n        Note: test._id (as string) and the valuecolumn entry where\n        valuetableId matches the channel UUID you need.\n\nStep 2: Query `valuecolumns_migrated`:\n        { \"refId\": \"<test._id as string>\",\n           \"childId\": { \"$regex\": \"<valuecolumn._id>\" } }\n\nStep 3: Read `.values[]` — raw float64 samples in chronological order.\n\nNote: `refId` is stored as a STRING in valuecolumns_migrated, not as ObjectId.\n\n---\n\n## `unittables_new` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n---\n\n## UUID reference tables\n\n`valuetableId` in `_tests.valuecolumns` resolves to either a measurement channel\n(time-series) or a result type (single scalar value).\n\nUse the `resolve_childId` tool at query time to look up any UUID you encounter.\nThe tables below are a static reference (first 40 entries each).\n\n### channelParameterMap — measurement channels (time-series)\n\n  (no channelParameterMap loaded)\n\n### TestResultTypes — scalar result types\n\n  (no TestResultTypes loaded)\n\n---\n\n## Query rules (follow strictly)\n\n1. Field names are CASE-SENSITIVE. `SPECIMEN_TYPE` ≠ `specimen_type`.\n   A wrong field name returns empty results silently — not an error.\n\n2. Use `resolve_childId` whenever you see a childId or valuetableId UUID.\n   Never guess the channel name from the UUID string.\n\n3. `valuecolumn._id` entries ending with `_key` were NOT migrated — skip them.\n\n4. `refId` in `valuecolumns_migrated` is a string. Match it as a string:\n   {\"refId\": \"{D1CB87C7-...}\"}  ← correct\n   {\"refId\": ObjectId(\"...\")}      ← wrong\n\n5. Fields with spaces are valid: `TestParametersFlat.Upper force limit`\n\n6. Never load the full `values` array unless you specifically need the\n   time-series data. Use `valuesCount` to check length first.\n\n\nAVAILABLE TOOLS:\n\nMongoDB (from MCP server):\n- `find`              — Query documents with filters, projection, and sorting\n- `aggregate`         — Run aggregation pipelines\n- `collection-schema` — Understand collection structure\n- `list-collections`  — See available collections\n- `count`             — Count matching documents\n\nUUID resolution:\n- `resolve_childId`   — Resolve any childId or valuetableId UUID to its human-readable name\n  Always call this before referencing a channel or result type by UUID.\n\nIMPORTANT — data_id and tool result format:\nEvery tool result is returned as a JSON object:\n  { \"data_id\": \"<uuid>\", \"info\": [\"Found N documents.\"], \"result\": [...] }\nIf the payload exceeds the context limit, `result` is replaced by `summary` (truncated preview)\nbut the full dataset remains accessible via `data_id`.\n\nCustom tools:\n- `run_python_analysis` — Execute Python (numpy/pandas/scipy) on retrieved data.\n    Accepts `data_json`, `data_id`, or `data_ids` (list).\n    Assign your final answer to `result`.\n- `render_visualization` — Display charts on the UI.\n    data_json must be FLAT records: [{\"label\": \"A\", \"value1\": 10}].\n    Use `data_id` only for already-flat aggregate results.\n- `render_text_block`    — Pin a Markdown summary to the dashboard.\n- `remove_widget`        — Remove a dashboard widget by id.\n- `reorder_dashboard`    — Reorder widgets by providing ids in desired order.\n\nStatistical Analysis workflow:\n1. Use `find` or `aggregate` to retrieve raw data — note the `data_id`.\n2. Pass `data_id` into `run_python_analysis` (or use `data_json` for small payloads).\n3. For multi-dataset analysis pass multiple ids via `data_ids`; access each as `datasets[\"<id>\"]`.\n4. Assign answer to `result`, then compose your natural-language response.\n\nALWAYS call `render_visualization` when showing aggregated or statistical data.\nYou are given the following similar text from a vectordb: \n"
+    },
+    {
+      "type": "HumanMessage",
+      "content": "Show me all tensile tests we have done for customer Company_1"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "I'll look up all tensile tests for customer \"Company_1\" in the database. Let me first explore the schema to understand the relevant fields.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_012aWjSgJX1gfukAKBPQKYMJ",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing_database\", \"collection\": \"_tests\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"ac4caf73-449d-461b-ba6d-eb472bc4eca1\", \"info\": [\"Could not deduce the schema for \\\"testing_database._tests\\\". This may be because it doesn't exist or is empty.\"], \"result\": [{\"type\": \"text\", \"text\": \"Could not deduce the schema for \\\"testing_database._tests\\\". This may be because it doesn't exist or is empty.\", \"id\": \"lc_0acd5f4c-a12d-4cd8-bc6f-d3dfcabe976f\"}]}"
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "node": "call_model",
+  "messages": [
+    {
+      "type": "SystemMessage",
+      "content": "You are an AI material testing assistant with MongoDB database access.\n\n\n## Database overview\n\nThree collections in MongoDB (all field names are CASE-SENSITIVE):\n\n| Collection               | Purpose                                        |\n|--------------------------|------------------------------------------------|\n| `_tests`                 | Primary test records — parameters + metadata  |\n| `valuecolumns_migrated`  | Time-series float arrays (one doc per channel) |\n| `unittables_new`         | Unit definitions referenced by value columns   |\n\n---\n\n## `_tests` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### TestParametersFlat — all keys present in sample document\n\nThese are the queryable measurement parameters. All key names are CASE-SENSITIVE.\n\n(could not fetch TestParametersFlat keys: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### valuecolumns array — item shape\n\nEach entry in the `valuecolumns` array has these fields:\n  _id          : string UUID  — ignore entries ending with `_key`\n  valuetableId : UUID         — resolves to a channel or result type (see UUID tables)\n  refId        : ObjectId     — back-reference to this test's _id\n  childId      : string       — composite: \"<valuecolumn._id>.<valuetableId>\"\n\n---\n\n## `valuecolumns_migrated` — field schema (live, from sample document)\n\nOne document per migrated channel per test. The `values` array is omitted here\n— it contains 10 k – 100 k+ raw floats and must be fetched directly when needed.\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n### JOIN PATTERN — fetching time-series data for a test\n\nStep 1: Query `_tests` for the test document.\n        Note: test._id (as string) and the valuecolumn entry where\n        valuetableId matches the channel UUID you need.\n\nStep 2: Query `valuecolumns_migrated`:\n        { \"refId\": \"<test._id as string>\",\n           \"childId\": { \"$regex\": \"<valuecolumn._id>\" } }\n\nStep 3: Read `.values[]` — raw float64 samples in chronological order.\n\nNote: `refId` is stored as a STRING in valuecolumns_migrated, not as ObjectId.\n\n---\n\n## `unittables_new` — field schema (live, from sample document)\n\n(could not fetch schema: get_sample_documents() got an unexpected keyword argument 'collection')\n\n---\n\n## UUID reference tables\n\n`valuetableId` in `_tests.valuecolumns` resolves to either a measurement channel\n(time-series) or a result type (single scalar value).\n\nUse the `resolve_childId` tool at query time to look up any UUID you encounter.\nThe tables below are a static reference (first 40 entries each).\n\n### channelParameterMap — measurement channels (time-series)\n\n  (no channelParameterMap loaded)\n\n### TestResultTypes — scalar result types\n\n  (no TestResultTypes loaded)\n\n---\n\n## Query rules (follow strictly)\n\n1. Field names are CASE-SENSITIVE. `SPECIMEN_TYPE` ≠ `specimen_type`.\n   A wrong field name returns empty results silently — not an error.\n\n2. Use `resolve_childId` whenever you see a childId or valuetableId UUID.\n   Never guess the channel name from the UUID string.\n\n3. `valuecolumn._id` entries ending with `_key` were NOT migrated — skip them.\n\n4. `refId` in `valuecolumns_migrated` is a string. Match it as a string:\n   {\"refId\": \"{D1CB87C7-...}\"}  ← correct\n   {\"refId\": ObjectId(\"...\")}      ← wrong\n\n5. Fields with spaces are valid: `TestParametersFlat.Upper force limit`\n\n6. Never load the full `values` array unless you specifically need the\n   time-series data. Use `valuesCount` to check length first.\n\n\nAVAILABLE TOOLS:\n\nMongoDB (from MCP server):\n- `find`              — Query documents with filters, projection, and sorting\n- `aggregate`         — Run aggregation pipelines\n- `collection-schema` — Understand collection structure\n- `list-collections`  — See available collections\n- `count`             — Count matching documents\n\nUUID resolution:\n- `resolve_childId`   — Resolve any childId or valuetableId UUID to its human-readable name\n  Always call this before referencing a channel or result type by UUID.\n\nIMPORTANT — data_id and tool result format:\nEvery tool result is returned as a JSON object:\n  { \"data_id\": \"<uuid>\", \"info\": [\"Found N documents.\"], \"result\": [...] }\nIf the payload exceeds the context limit, `result` is replaced by `summary` (truncated preview)\nbut the full dataset remains accessible via `data_id`.\n\nCustom tools:\n- `run_python_analysis` — Execute Python (numpy/pandas/scipy) on retrieved data.\n    Accepts `data_json`, `data_id`, or `data_ids` (list).\n    Assign your final answer to `result`.\n- `render_visualization` — Display charts on the UI.\n    data_json must be FLAT records: [{\"label\": \"A\", \"value1\": 10}].\n    Use `data_id` only for already-flat aggregate results.\n- `render_text_block`    — Pin a Markdown summary to the dashboard.\n- `remove_widget`        — Remove a dashboard widget by id.\n- `reorder_dashboard`    — Reorder widgets by providing ids in desired order.\n\nStatistical Analysis workflow:\n1. Use `find` or `aggregate` to retrieve raw data — note the `data_id`.\n2. Pass `data_id` into `run_python_analysis` (or use `data_json` for small payloads).\n3. For multi-dataset analysis pass multiple ids via `data_ids`; access each as `datasets[\"<id>\"]`.\n4. Assign answer to `result`, then compose your natural-language response.\n\nALWAYS call `render_visualization` when showing aggregated or statistical data.\nYou are given the following similar text from a vectordb: \n"
+    },
+    {
+      "type": "HumanMessage",
+      "content": "Show me all tensile tests we have done for customer Company_1"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "Let me query the database to find all tensile tests for customer Company_1.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01Eo7FL3Gnrx6EB5CKtHqq5w",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.Customer\":\"Company_1\",\"TestParametersFlat.Test type\":\"Tensile\"}, \"limit\": 100}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"3d1ddd4a-00e7-4584-92b9-2da1d71e36ff\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\"], \"result\": [{\"type\": \"text\", \"text\": \"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\", \"id\": \"lc_4a1545e1-e001-4f1b-8435-838aba15a579\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "No results with that exact filter. Let me explore the schema and check the actual field names used for customer and test type.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_011qZTTxHcFfYaTjvDy5X9sr",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"testing\", \"collection\": \"_tests\"}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"52d5a0b3-ebdc-4bf7-967f-e919ac34c435\", \"info\": [\"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\"], \"result\": [{\"type\": \"text\", \"text\": \"Could not deduce the schema for \\\"testing._tests\\\". This may be because it doesn't exist or is empty.\", \"id\": \"lc_9902df1b-9767-482c-b272-802157e9cc8c\"}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "id": "toolu_01KzWQvBkyUgJXwfmKsXM9Ko",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "list-databases",
+          "type": "tool_use",
+          "index": 0,
+          "partial_json": ""
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"8c5fb1dd-e39f-4d60-9262-e90972f58c06\", \"info\": [\"Found 4 databases:\"], \"result\": [{\"name\": \"admin\", \"size\": 102400}, {\"name\": \"config\", \"size\": 118784}, {\"name\": \"local\", \"size\": 65536}, {\"name\": \"txp_clean\", \"size\": 45033590784}]}"
+    },
+    {
+      "type": "AIMessage",
+      "content": [
+        {
+          "text": "The correct database is `txp_clean`. Let me re-query there and also check the schema.",
+          "type": "text",
+          "index": 0
+        },
+        {
+          "id": "toolu_01WTNAQs5qcTAg33FhZJd3bB",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "collection-schema",
+          "type": "tool_use",
+          "index": 1,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"sampleSize\": 5}"
+        },
+        {
+          "id": "toolu_019WEqJmUuKcGN2btHefr5Jv",
+          "caller": {
+            "type": "direct"
+          },
+          "input": {},
+          "name": "find",
+          "type": "tool_use",
+          "index": 2,
+          "partial_json": "{\"database\": \"txp_clean\", \"collection\": \"_tests\", \"filter\": {\"TestParametersFlat.Customer\":\"Company_1\"}, \"limit\": 5}"
+        }
+      ]
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"a40c8ce3-ec16-42d3-9163-b4b2336ae005\", \"info\": [\"Found 12 fields in the schema for \\\"txp_clean._tests\\\". Note that this schema is inferred from a sample and may not represent the full schema of the collection.\"], \"result\": {\"_id\": {\"types\": [{\"bsonType\": \"String\"}]}, \"clientAppType\": {\"types\": [{\"bsonType\": \"String\"}]}, \"state\": {\"types\": [{\"bsonType\": \"String\"}]}, \"tags\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"String\"}]}]}, \"version\": {\"types\": [{\"bsonType\": \"String\"}]}, \"valueColumns\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"Document\", \"fields\": {\"unitTableId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"valueTableId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"_id\": {\"types\": [{\"bsonType\": \"String\"}]}, \"name\": {\"types\": [{\"bsonType\": \"Null\"}, {\"bsonType\": \"String\"}]}, \"modifiedOn\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {}}]}, \"segments\": {\"types\": [{\"bsonType\": \"Array\", \"types\": [{\"bsonType\": \"Document\", \"fields\": {\"fromKey\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"label\": {\"types\": [{\"bsonType\": \"String\"}]}, \"source\": {\"types\": [{\"bsonType\": \"String\"}]}, \"toKey\": {\"types\": [{\"bsonType\": \"Number\"}]}}}]}]}, \"isActivationEditable\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"isValueEditable\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"markedAsEstimated\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"markedAsManipulated\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"picture\": {\"types\": [{\"bsonType\": \"String\"}]}, \"sortIndex\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"isVisible\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"tolerance\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {\"lowerLimit\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"target\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"upperLimit\": {\"types\": [{\"bsonType\": \"Number\"}]}}}]}}}]}]}, \"hasMachineConfigurationInfo\": {\"types\": [{\"bsonType\": \"Boolean\"}]}, \"testProgramId\": {\"types\": [{\"bsonType\": \"String\"}]}, \"testProgramVersion\": {\"types\": [{\"bsonType\": \"String\"}]}, \"name\": {\"types\": [{\"bsonType\": \"String\"}]}, \"modifiedOn\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {}}]}, \"TestParametersFlat\": {\"types\": [{\"bsonType\": \"Document\", \"fields\": {\"TYPE_OF_TESTING_STR\": {\"types\": [{\"bsonType\": \"String\"}]}, \"MACHINE_TYPE_STR\": {\"types\": [{\"bsonType\": \"String\"}]}, \"CUSTOMER_NAME\": {\"types\": [{\"bsonType\": \"String\"}]}, \"GRIPS\": {\"types\": [{\"bsonType\": \"String\"}]}, \"GRIPS_SPECIFICATION\": {\"types\": [{\"bsonType\": \"String\"}]}, \"JAWS\": {\"types\": [{\"bsonType\": \"String\"}]}, \"LOAD_CELL\": {\"types\": [{\"bsonType\": \"String\"}]}, \"APPLICATION_ENGINEER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Wall thickness\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"SPECIMEN_THICKNESS\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"SPECIMEN_WIDTH\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Outer diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Inner diameter\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Fineness\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Density of the specimen material\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Weight of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Total length of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section input\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Inner circumference\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Parallel specimen length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Mass per unit area of the specimen\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Grip to grip separation at the start position\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Force shutdown threshold\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Upper force limit\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Maximum extension\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Gage length, fine strain\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"TEST_SPEED\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, Young's modulus\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, point of load removal\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Max. permissible force at end of test\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"End of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Type of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Begin of Young's modulus determination\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Tube definition\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x1%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x2%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Young's modulus preset\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"CUSTOMER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"TESTER\": {\"types\": [{\"bsonType\": \"String\"}]}, \"STANDARD\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Travel preset x3%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x4%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x5%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Travel preset x6%\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Headline for the report\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Date\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Clock time\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Date/Clock time\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Marked initial gage length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Speed, yield point\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Negative cross-section correction value\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section correction factor\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Designation sub-series 1\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Designation sub-series 2\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Specimen designation\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Gage length after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter 1 after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Diameter 2 after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Specimen thickness after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Specimen width after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Cross-section after break\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"SPECIMEN_TYPE\": {\"types\": [{\"bsonType\": \"String\"}]}, \"Length of the reference beam\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Mid span\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"TYPE_OF_TESTING\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Bar length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Tube length\": {\"types\": [{\"bsonType\": \"Number\"}]}, \"Series designation\": {\"types\": [{\"bsonType\": \"String\"}]}}}]}}}"
+    },
+    {
+      "type": "ToolMessage",
+      "content": "{\"data_id\": \"721c6faf-5627-4e55-ad19-9725063623df\", \"info\": [\"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\"], \"result\": [{\"type\": \"text\", \"text\": \"Query on collection \\\"_tests\\\" resulted in 0 documents. Returning 0 documents.\", \"id\": \"lc_de6e91a5-cbdd-4291-a238-b8d87d9a4088\"}]}"
+    }
+  ]
+}
