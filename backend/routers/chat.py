@@ -43,6 +43,7 @@ class RenameSessionRequest(BaseModel):
 class SaveWidgetLayoutsRequest(BaseModel):
     layouts: list[WidgetLayout]
 
+
 router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger(__name__)
 
@@ -56,16 +57,28 @@ _active_sessions: set[str] = set()  # tracks session_ids with an in-flight query
 STUB_SCHEMA = DatasetSchema(
     tables={
         "test_results": [
-            SchemaField(name="sample_id", type="string", description="Unique sample identifier"),
-            SchemaField(name="material", type="string", description="Material name / grade"),
+            SchemaField(
+                name="sample_id", type="string", description="Unique sample identifier"
+            ),
+            SchemaField(
+                name="material", type="string", description="Material name / grade"
+            ),
             SchemaField(name="batch_id", type="string", description="Production batch"),
-            SchemaField(name="test_type", type="string", description="E.g. tensile, fatigue, hardness"),
+            SchemaField(
+                name="test_type",
+                type="string",
+                description="E.g. tensile, fatigue, hardness",
+            ),
             SchemaField(name="tensile_strength", type="float", description="MPa"),
             SchemaField(name="yield_strength", type="float", description="MPa"),
             SchemaField(name="elongation", type="float", description="Percent"),
             SchemaField(name="hardness", type="float", description="HRC"),
-            SchemaField(name="test_date", type="datetime", description="ISO8601 timestamp"),
-            SchemaField(name="operator", type="string", description="Lab technician ID"),
+            SchemaField(
+                name="test_date", type="datetime", description="ISO8601 timestamp"
+            ),
+            SchemaField(
+                name="operator", type="string", description="Lab technician ID"
+            ),
         ]
     }
 )
@@ -92,7 +105,11 @@ def _update_session_meta(session: Session) -> None:
     if not session.title and session.messages:
         first_user = next((m for m in session.messages if m.role == "user"), None)
         if first_user:
-            content = first_user.content if isinstance(first_user.content, str) else str(first_user.content)
+            content = (
+                first_user.content
+                if isinstance(first_user.content, str)
+                else str(first_user.content)
+            )
             session.title = content[:80]
 
 
@@ -109,15 +126,16 @@ def _text_metrics(text: str | None) -> dict:
         "est_tokens": max(1, round(chars / 4)) if chars else 0,
     }
 
+
 def get_similarity_by_query(message: str, session_id):
     try:
         print("Querying")
         print(message, session_id)
         rag_url = os.getenv("RAG_URL", "http://localhost:3002")
-        response = requests.post(f"{rag_url}/generate_context", json={
-            "query": message,
-            "session_id": session_id
-        })
+        response = requests.post(
+            f"{rag_url}/generate_context",
+            json={"query": message, "session_id": session_id},
+        )
         print(response.status_code)
         print(response.text)
         context = response.json().get("context", "")
@@ -136,7 +154,6 @@ def get_similarity_by_query(message: str, session_id):
     except Exception as e:
         print("Exception with rag:", e)
         return ""
-
 
 
 # ---------------------------------------------------------------------------
@@ -159,10 +176,13 @@ async def chat_stream(req: ChatRequest):
     _active_sessions.add(session.session_id)
 
     async def event_generator():
-        yield _sse_event("session", {"session_id": session.session_id, "message_id": message_id})
+        yield _sse_event(
+            "session", {"session_id": session.session_id, "message_id": message_id}
+        )
         try:
             from src.agent import Agent
             from langchain_core.messages import HumanMessage
+
             request_metrics = _text_metrics(req.message)
             logger.info(
                 "[context-debug] chat_stream request: chars=%s bytes=%s est_tokens=%s dashboard_widgets=%s",
@@ -179,7 +199,11 @@ async def chat_stream(req: ChatRequest):
                 similar_metrics["bytes"],
                 similar_metrics["est_tokens"],
             )
-            dashboard_ctx = [w.model_dump() for w in req.dashboard_widgets] if req.dashboard_widgets else []
+            dashboard_ctx = (
+                [w.model_dump() for w in req.dashboard_widgets]
+                if req.dashboard_widgets
+                else []
+            )
             tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
             agent = tmp.create()
             config = {"configurable": {"thread_id": session.session_id}}
@@ -191,13 +215,19 @@ async def chat_stream(req: ChatRequest):
             thinking = []
             query_used = None
 
-            async for event in agent.astream_events({"messages": [HumanMessage(content=req.message)]}, config, version="v2"):
+            async for event in agent.astream_events(
+                {"messages": [HumanMessage(content=req.message)]}, config, version="v2"
+            ):
                 kind = event["event"]
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
                     content = chunk.content
                     if isinstance(content, list):
-                        text = "".join(block.get("text", "") for block in content if block.get("type") == "text")
+                        text = "".join(
+                            block.get("text", "")
+                            for block in content
+                            if block.get("type") == "text"
+                        )
                     else:
                         text = content
 
@@ -208,15 +238,23 @@ async def chat_stream(req: ChatRequest):
                 elif kind == "on_tool_start":
                     tool_name = event["name"]
                     if tool_name == "render_visualization":
-                        yield _sse_event("thinking", {"step": "Rendering visualization..."})
+                        yield _sse_event(
+                            "thinking", {"step": "Rendering visualization..."}
+                        )
                     elif tool_name == "render_text_block":
                         yield _sse_event("thinking", {"step": "Creating text block..."})
                     elif tool_name == "run_python_analysis":
-                        yield _sse_event("thinking", {"step": "Running statistical analysis..."})
+                        yield _sse_event(
+                            "thinking", {"step": "Running statistical analysis..."}
+                        )
                     elif tool_name == "remove_widget":
-                        yield _sse_event("thinking", {"step": "Removing widget from dashboard..."})
+                        yield _sse_event(
+                            "thinking", {"step": "Removing widget from dashboard..."}
+                        )
                     elif tool_name == "reorder_dashboard":
-                        yield _sse_event("thinking", {"step": "Reordering dashboard..."})
+                        yield _sse_event(
+                            "thinking", {"step": "Reordering dashboard..."}
+                        )
                     elif tool_name == "submit_answer":
                         pass  # don't show this as a thinking step
                     elif tool_name in ("find", "aggregate", "count"):
@@ -229,17 +267,26 @@ async def chat_stream(req: ChatRequest):
                         else:
                             query_used = formatted
                         thinking.append(f"Executing: {formatted}")
-                        yield _sse_event("thinking", {"step": f"Executing: {formatted}"})
+                        yield _sse_event(
+                            "thinking", {"step": f"Executing: {formatted}"}
+                        )
                     else:
                         thinking.append(f"Used tool: {tool_name}")
-                        yield _sse_event("thinking", {"step": f"Executing query: {tool_name}..."})
+                        yield _sse_event(
+                            "thinking", {"step": f"Executing query: {tool_name}..."}
+                        )
 
                 elif kind == "on_tool_error":
                     tool_name = event.get("name", "unknown")
-                    logger.warning("Tool error for '%s': %s", tool_name, event.get("data", {}))
-                    yield _sse_event("thinking", {
-                        "step": f"Tool '{tool_name}' encountered an error, retrying with corrected parameters..."
-                    })
+                    logger.warning(
+                        "Tool error for '%s': %s", tool_name, event.get("data", {})
+                    )
+                    yield _sse_event(
+                        "thinking",
+                        {
+                            "step": f"Tool '{tool_name}' encountered an error, retrying with corrected parameters..."
+                        },
+                    )
 
                 elif kind == "on_tool_end":
                     tool_name = event["name"]
@@ -250,12 +297,12 @@ async def chat_stream(req: ChatRequest):
                         "[context-debug] tool_end '%s': output_chars=%s output_est_tokens=%s",
                         tool_name,
                         output_metrics["chars"],
-                        output_metrics["est_tokens"]
+                        output_metrics["est_tokens"],
                     )
 
                     if tool_name == "render_visualization":
                         try:
-                            kwargs = event['data'].get("input", {})
+                            kwargs = event["data"].get("input", {})
                             data = kwargs.get("data_json", "[]")
                             # Resolve data_id if the LLM referenced stored data
                             data_id_ref = kwargs.get("data_id", "")
@@ -271,7 +318,9 @@ async def chat_stream(req: ChatRequest):
                             visualization = {
                                 "type": "chart",
                                 "data": {
-                                    "chartType": kwargs.get("chart_type", "bar").lower(),
+                                    "chartType": kwargs.get(
+                                        "chart_type", "bar"
+                                    ).lower(),
                                     "title": kwargs.get("title", ""),
                                     "description": kwargs.get("description", ""),
                                     "xAxisKey": kwargs.get("x_axis_key", "name"),
@@ -292,7 +341,7 @@ async def chat_stream(req: ChatRequest):
 
                     elif tool_name == "render_text_block":
                         try:
-                            kwargs = event['data'].get("input", {})
+                            kwargs = event["data"].get("input", {})
                             text_vis = {
                                 "type": "paragraphs",
                                 "data": {
@@ -313,29 +362,35 @@ async def chat_stream(req: ChatRequest):
 
                     elif tool_name == "remove_widget":
                         try:
-                            kwargs = event['data'].get("input", {})
+                            kwargs = event["data"].get("input", {})
                             widget_id = kwargs.get("widget_id", "")
                             if widget_id:
-                                yield _sse_event("remove_widget", {"widget_id": widget_id})
+                                yield _sse_event(
+                                    "remove_widget", {"widget_id": widget_id}
+                                )
                         except Exception as e:
                             print("remove_widget error:", e)
 
                     elif tool_name == "reorder_dashboard":
                         try:
-                            kwargs = event['data'].get("input", {})
+                            kwargs = event["data"].get("input", {})
                             widget_ids = kwargs.get("widget_ids", [])
                             print(f"[reorder_dashboard] widget_ids={widget_ids}")
                             if widget_ids:
-                                yield _sse_event("reorder_dashboard", {"widget_ids": widget_ids})
+                                yield _sse_event(
+                                    "reorder_dashboard", {"widget_ids": widget_ids}
+                                )
                         except Exception as e:
                             print("reorder_dashboard error:", e)
 
                     elif tool_name == "submit_answer":
                         try:
-                            kwargs = event['data'].get("input", {})
+                            kwargs = event["data"].get("input", {})
                             answer = kwargs.get("answer", "")
                             followups = kwargs.get("hypotheses", [])
-                            full_text = answer  # override streamed text with structured answer
+                            full_text = (
+                                answer  # override streamed text with structured answer
+                            )
                             yield _sse_event("followups", {"suggestions": followups})
                         except Exception as e:
                             print("submit_answer parsing error:", e)
@@ -356,6 +411,7 @@ async def chat_stream(req: ChatRequest):
             _update_session_meta(session)
         except Exception as e:
             import traceback
+
             print("ERROR in event_generator:", e)
             traceback.print_exc()
             yield _sse_event("error", {"message": str(e)})
@@ -400,6 +456,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
         from src.agent import Agent
         from langchain_core.messages import HumanMessage
+
         config = {"configurable": {"thread_id": session.session_id}}
         request_metrics = _text_metrics(req.message)
         logger.info(
@@ -418,10 +475,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
         )
         tmp = Agent(req.message, similar_messages)
         agent = tmp.create()
-        response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
+        response = await agent.ainvoke(
+            {"messages": [HumanMessage(content=req.message)]}, config
+        )
 
         # Process output
-        messages = response['messages']
+        messages = response["messages"]
         print(messages)
         ai_msg = messages[-1]
         text = ai_msg
@@ -436,8 +495,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 for prior_msg in reversed(messages):
                     if prior_msg.type == "ai" and prior_msg.tool_calls:
                         for tc in prior_msg.tool_calls:
-                            if tc['name'] == 'render_visualization':
-                                kwargs = tc['args']
+                            if tc["name"] == "render_visualization":
+                                kwargs = tc["args"]
                                 data = kwargs.get("data_json", "[]")
                                 # Resolve data_id if the LLM referenced stored data
                                 data_id_ref = kwargs.get("data_id", "")
@@ -459,7 +518,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                 visualization = {
                                     "type": "chart",
                                     "data": {
-                                        "chartType": kwargs.get("chart_type", "bar").lower(),
+                                        "chartType": kwargs.get(
+                                            "chart_type", "bar"
+                                        ).lower(),
                                         "title": kwargs.get("title", ""),
                                         "description": kwargs.get("description", ""),
                                         "xAxisKey": kwargs.get("x_axis_key", "name"),
@@ -468,15 +529,21 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                     },
                                 }
                                 break
-                        if visualization: break
-                if visualization: break
-            if getattr(msg, "name", None) in ["get_test", "search_tests", "get_aggregated_data_for_chart"]:
+                        if visualization:
+                            break
+                if visualization:
+                    break
+            if getattr(msg, "name", None) in [
+                "get_test",
+                "search_tests",
+                "get_aggregated_data_for_chart",
+            ]:
                 thinking.append(f"Used tool: {msg.name}")
 
         submitted_answer = text.tool_calls[0]
-        kwargs = submitted_answer['args']
-        text = kwargs.get('answer', '')
-        followups = kwargs.get('hypotheses',[])
+        kwargs = submitted_answer["args"]
+        text = kwargs.get("answer", "")
+        followups = kwargs.get("hypotheses", [])
         print(text)
         print(followups)
         session.messages.append(
