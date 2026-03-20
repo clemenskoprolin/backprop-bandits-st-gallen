@@ -3,14 +3,15 @@ import json
 import uuid
 import concurrent.futures
 import logging
-from typing import Literal
+import operator
+from typing import Annotated, Literal
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 from src import db
@@ -24,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 # Module-level reference to the active Agent's tool_results, set by Agent._wrap_tool_node
 _active_tool_results: dict[str, dict] = {}
+
+MAX_AGENT_ITERATIONS = 15
+
+
+class AgentState(MessagesState):
+    iteration_count: Annotated[int, operator.add]
 
 
 def _resolve_data_id(data_id: str) -> str | None:
@@ -602,8 +609,20 @@ def run_python_analysis(
     )
 
 
+@tool
+def finish_analysis(summary: str, data_ids: list[str] = []) -> str:
+    """Signal that data retrieval and analysis is complete.
+    Call this when you have gathered and analyzed all data needed to answer the user's question.
+
+    Args:
+        summary: Brief summary of findings.
+        data_ids: data_id values from tool results for the visualization step.
+    """
+    return "Analysis complete. Proceeding to visualization."
+
+
 # Custom tools (Recharts-specific, kept alongside MCP tools)
-custom_tools = [run_python_analysis]
+custom_tools = [run_python_analysis, finish_analysis]
 dashboard_tools = [
     render_visualization,
     render_text_block,
@@ -679,7 +698,7 @@ async def shutdown_mcp_client():
     mcp_client = None
 
 
-def call_model(state: MessagesState):
+def call_model(state: AgentState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         # Include DB_CONTEXT only on the first call; after MCP tool results
@@ -705,14 +724,51 @@ def call_model(state: MessagesState):
     return {"messages": [response]}
 
 
-def should_continue(state: MessagesState) -> Literal["tools", "visualizer"]:
+def should_continue(
+    state: AgentState,
+) -> Literal["tools", "finish_and_visualize", "visualizer"]:
     last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        return "tools"
-    return "visualizer"
+    iteration_count = state.get("iteration_count", 0)
+
+    # Safety net: force transition after max iterations
+    if iteration_count >= MAX_AGENT_ITERATIONS:
+        logger.warning(
+            "Agent hit max iterations (%d), forcing transition to visualizer",
+            MAX_AGENT_ITERATIONS,
+        )
+        if last_message.tool_calls:
+            return "finish_and_visualize"
+        return "visualizer"
+
+    if not last_message.tool_calls:
+        return "visualizer"
+
+    if "finish_analysis" in {tc["name"] for tc in last_message.tool_calls}:
+        return "finish_and_visualize"
+
+    return "tools"
 
 
-def output_node(state: MessagesState):
+async def finish_and_visualize_node(state: AgentState):
+    """Respond to all pending tool calls with synthetic results, then hand off to visualizer."""
+    last_message = state["messages"][-1]
+    results = []
+    for tc in last_message.tool_calls:
+        if tc["name"] == "finish_analysis":
+            content = "Analysis complete. Proceeding to visualization."
+        else:
+            content = "Skipped — max iterations reached, proceeding to visualization."
+        results.append(
+            ToolMessage(
+                content=content,
+                tool_call_id=tc["id"],
+                name=tc["name"],
+            )
+        )
+    return {"messages": results}
+
+
+def output_node(state: AgentState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
@@ -737,7 +793,7 @@ def output_node(state: MessagesState):
     return {"messages": [response]}
 
 
-# def self_critic(state: MessagesState):
+# def self_critic(state: AgentState):
 #     global global_count
 #     messages = state["messages"]
 #     # if not messages or messages[0].type != "system":
@@ -747,7 +803,7 @@ def output_node(state: MessagesState):
 #     global_count += 1
 #     return {"messages": [response]}
 
-# def loop_node(state: MessagesState) -> Literal["tools", "output"]:
+# def loop_node(state: AgentState) -> Literal["tools", "output"]:
 #     messages = state["messages"]
 #     last_message = messages[-1]
 #     print("Last:", last_message)  # ← .content not .text
@@ -766,7 +822,7 @@ def output_node(state: MessagesState):
 #     return "output"
 
 
-# def intermediate_output_node(state: MessagesState):
+# def intermediate_output_node(state: AgentState):
 #     global global_count
 #     messages = state["messages"]
 #     if not messages or messages[0].type != "system":
@@ -777,7 +833,7 @@ def output_node(state: MessagesState):
 #     return {"messages": [response]}
 
 
-def visualizer(state: MessagesState):
+def visualizer(state: AgentState):
     messages = state["messages"]
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
@@ -805,7 +861,7 @@ def visualizer(state: MessagesState):
     return {"messages": [response]}
 
 
-def has_visual(state: MessagesState) -> Literal["visual_tool", "output"]:
+def has_visual(state: AgentState) -> Literal["visual_tool", "output"]:
     messages = state["messages"]
     last_message = messages[-1]
     if last_message.tool_calls:
@@ -932,27 +988,35 @@ You can reference existing widgets when answering. If the user asks to rearrange
           result = {{'slope': float(slope), 'p_value': float(p), 'trend': 'decreasing' if slope < 0 else 'stable/increasing'}}
           \"\"\"
 
-        IMPORTANT — Visualization is handled AUTOMATICALLY after you finish:
-        `render_visualization`, `render_text_block`, `remove_widget`, and `reorder_dashboard` are NOT available to you.
-        Do NOT try to call them. Do NOT use `run_python_analysis` to prepare or reshape data for charts.
-        When your data retrieval and analysis is complete, respond with a TEXT summary (no tool calls).
-        Include the relevant `data_id` values in your summary so the visualization step can use them directly.
+        IMPORTANT — When you have finished all data retrieval and analysis:
+        Call `finish_analysis(summary, data_ids)` with a brief summary of your findings and the
+        relevant `data_id` values. This signals that you are done and triggers the visualization step.
+        Do NOT try to call `render_visualization`, `render_text_block`, `remove_widget`, or `reorder_dashboard` — those are handled
+        automatically after you call `finish_analysis`.
+        Do NOT use `run_python_analysis` to prepare or reshape data for charts.
+
+        You have a maximum of {MAX_AGENT_ITERATIONS} tool-call rounds. Use them efficiently:
+        1. Query the data you need (find/aggregate)
+        2. Run any statistical analysis (run_python_analysis)
+        3. Call finish_analysis with your summary and data_ids
         """
 
-        base_prompt = "You are an AI material testing assistant with MongoDB database access."
+        base_prompt = (
+            "You are an AI material testing assistant with MongoDB database access."
+        )
 
         # Full prompt with DB_CONTEXT — used on first call_model invocation
         system_prompt = (
-            base_prompt + db_context_block + tools_and_rest
+            base_prompt
+            + db_context_block
+            + tools_and_rest
             + similar_data
             + dashboard_context
         )
 
         # Lighter prompt without DB_CONTEXT — used after MCP tool results are in the conversation
         system_prompt_no_db = (
-            base_prompt + tools_and_rest
-            + similar_data
-            + dashboard_context
+            base_prompt + tools_and_rest + similar_data + dashboard_context
         )
 
         output_system_prompt = (
@@ -1183,7 +1247,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
             return headers, extracted_data
         return headers, structured_data
 
-    async def _wrap_tool_node(self, state: MessagesState):
+    async def _wrap_tool_node(self, state: AgentState):
         """Wrap tool_node to intercept and store MCP tool results."""
         global _active_tool_results
         # Keep module-level reference in sync so @tool functions can resolve data_ids
@@ -1196,20 +1260,26 @@ You can reference existing widgets when answering. If the user asks to rearrange
             # ToolMessages manually so the LLM can see what went wrong and retry.
             logger.error("Tool execution failed: %s", e, exc_info=True)
             from langchain_core.messages import ToolMessage as _ToolMessage
+
             error_messages = []
             last_ai_msg = next(
-                (m for m in reversed(state["messages"])
-                 if hasattr(m, "tool_calls") and m.tool_calls),
+                (
+                    m
+                    for m in reversed(state["messages"])
+                    if hasattr(m, "tool_calls") and m.tool_calls
+                ),
                 None,
             )
             if last_ai_msg:
                 for tc in last_ai_msg.tool_calls:
-                    error_messages.append(_ToolMessage(
-                        content=f"Error executing tool: {e}",
-                        tool_call_id=tc["id"],
-                        name=tc["name"],
-                        status="error",
-                    ))
+                    error_messages.append(
+                        _ToolMessage(
+                            content=f"Error executing tool: {e}",
+                            tool_call_id=tc["id"],
+                            name=tc["name"],
+                            status="error",
+                        )
+                    )
             return {"messages": error_messages}
 
         for msg in result.get("messages", []):
@@ -1260,13 +1330,15 @@ You can reference existing widgets when answering. If the user asks to rearrange
                     "result": extracted,
                 }
             msg.content = json.dumps(llm_content)
+        result["iteration_count"] = 1
         return result
 
     def build_agent(self):
         """Build the agent graph. Called after MCP tools are initialized."""
-        graph_builder = StateGraph(MessagesState)
+        graph_builder = StateGraph(AgentState)
         graph_builder.add_node("agent", call_model)
         graph_builder.add_node("tools", self._wrap_tool_node)
+        graph_builder.add_node("finish_and_visualize", finish_and_visualize_node)
         graph_builder.add_node("visualizer", visualizer)
         graph_builder.add_node("visual_tool", visualization_tool)
         graph_builder.add_node("output", output_node)
@@ -1274,6 +1346,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
         graph_builder.add_edge(START, "agent")
         graph_builder.add_conditional_edges("agent", should_continue)
         graph_builder.add_edge("tools", "agent")
+        graph_builder.add_edge("finish_and_visualize", "visualizer")
         graph_builder.add_conditional_edges("visualizer", has_visual)
         graph_builder.add_edge("visual_tool", "output")
         graph_builder.add_edge("output", "submit_tool")
