@@ -8,7 +8,7 @@ CoMat is an AI assistant that speaks the language of material testing engineers.
 
 **Live demo**: [https://test.koprolin.com/](https://test.koprolin.com/)
 
-[<img width="49%" src="docs/2.png" alt="">](docs/1.png)
+[<img width="49%" src="docs/2.png" alt="">](docs/2.png)
 [<img width="49%" src="docs/3.png" alt="">](docs/3.png)
 
 > *"Compare material FancyPlast 42 and UltraPlast 99 — are the differences statistically significant?"*
