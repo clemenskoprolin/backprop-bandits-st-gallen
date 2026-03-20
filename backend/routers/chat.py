@@ -440,17 +440,17 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                 kwargs = tc['args']
                                 data = kwargs.get("data_json", "[]")
                                 # Resolve data_id if the LLM referenced stored data
-                            data_id_ref = kwargs.get("data_id", "")
-                            if data_id_ref:
-                                resolved = _resolve_data_id(data_id_ref)
-                                if resolved is not None:
-                                    data = resolved
-                            if isinstance(data, str):
-                                try:
-                                    data = json.loads(data)
-                                except:
-                                    data = []
-                            chart_config = kwargs.get("chart_config_json", "{}")
+                                data_id_ref = kwargs.get("data_id", "")
+                                if data_id_ref:
+                                    resolved = _resolve_data_id(data_id_ref)
+                                    if resolved is not None:
+                                        data = resolved
+                                if isinstance(data, str):
+                                    try:
+                                        data = json.loads(data)
+                                    except:
+                                        data = []
+                                chart_config = kwargs.get("chart_config_json", "{}")
                                 if isinstance(chart_config, str):
                                     try:
                                         chart_config = json.loads(chart_config)
