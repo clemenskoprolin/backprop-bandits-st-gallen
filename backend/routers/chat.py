@@ -45,10 +45,11 @@ router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# In-memory stub store (replace with DB later)
+# In-memory session store (lives for the duration of the server process)
 # ---------------------------------------------------------------------------
 
 _sessions: dict[str, Session] = {}
+_active_sessions: set[str] = set()  # tracks session_ids with an in-flight query
 
 STUB_SCHEMA = DatasetSchema(
     tables={
@@ -79,6 +80,18 @@ def _get_or_create_session(session_id: str | None) -> Session:
     new_session = Session(session_id=session_id if session_id else str(uuid4()))
     _sessions[new_session.session_id] = new_session
     return new_session
+
+
+def _update_session_meta(session: Session) -> None:
+    """Update session metadata (title, timestamp) after a message is added."""
+    from datetime import datetime
+
+    session.updated_at = datetime.utcnow()
+    if not session.title and session.messages:
+        first_user = next((m for m in session.messages if m.role == "user"), None)
+        if first_user:
+            content = first_user.content if isinstance(first_user.content, str) else str(first_user.content)
+            session.title = content[:80]
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -132,8 +145,16 @@ def get_similarity_by_query(message: str, session_id):
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
     session = _get_or_create_session(req.session_id)
+
+    if session.session_id in _active_sessions:
+        raise HTTPException(
+            status_code=409,
+            detail="A query is already running on this session. Please wait for it to finish.",
+        )
+
     message_id = str(uuid4())
     session.messages.append(Message(role="user", content=req.message))
+    _active_sessions.add(session.session_id)
 
     async def event_generator():
         yield _sse_event("session", {"session_id": session.session_id, "message_id": message_id})
@@ -324,11 +345,14 @@ async def chat_stream(req: ChatRequest):
                     query_used=query_used,
                 )
             )
+            _update_session_meta(session)
         except Exception as e:
             import traceback
             print("ERROR in event_generator:", e)
             traceback.print_exc()
             yield _sse_event("error", {"message": str(e)})
+        finally:
+            _active_sessions.discard(session.session_id)
         yield _sse_event("done", {})
 
     return StreamingResponse(
@@ -351,106 +375,118 @@ async def chat_stream(req: ChatRequest):
 async def chat(req: ChatRequest) -> ChatResponse:
     """Non-streaming fallback. Returns complete response in one JSON payload."""
     session = _get_or_create_session(req.session_id)
-    message_id = str(uuid4())
 
-    session.messages.append(Message(role="user", content=req.message))
-
-    query = None
-
-    from src.agent import Agent
-    from langchain_core.messages import HumanMessage
-    config = {"configurable": {"thread_id": session.session_id}}
-    request_metrics = _text_metrics(req.message)
-    logger.info(
-        "[context-debug] chat request: chars=%s bytes=%s est_tokens=%s",
-        request_metrics["chars"],
-        request_metrics["bytes"],
-        request_metrics["est_tokens"],
-    )
-    similar_messages = get_similarity_by_query(req.message, req.session_id)
-    similar_metrics = _text_metrics(similar_messages)
-    logger.info(
-        "[context-debug] chat similar context passed to Agent: chars=%s bytes=%s est_tokens=%s",
-        similar_metrics["chars"],
-        similar_metrics["bytes"],
-        similar_metrics["est_tokens"],
-    )
-    tmp = Agent(req.message, similar_messages)
-    agent = tmp.create()
-    response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
-
-    # Process output
-    messages = response['messages']
-    print(messages)
-    ai_msg = messages[-1]
-    text = ai_msg
-    # ai_msg = messages
-    # text = ai_msg
-    visualization = None
-    thinking = []
-
-    # Check if render_visualization was called to fetch the block
-    for msg in reversed(messages):
-        if getattr(msg, "name", None) == "render_visualization":
-            for prior_msg in reversed(messages):
-                if prior_msg.type == "ai" and prior_msg.tool_calls:
-                    for tc in prior_msg.tool_calls:
-                        if tc['name'] == 'render_visualization':
-                            kwargs = tc['args']
-                            data = kwargs.get("data_json", "[]")
-                            if isinstance(data, str):
-                                try:
-                                    data = json.loads(data)
-                                except:
-                                    data = []
-                            chart_config = kwargs.get("chart_config_json", "{}")
-                            if isinstance(chart_config, str):
-                                try:
-                                    chart_config = json.loads(chart_config)
-                                except:
-                                    chart_config = {}
-                            visualization = {
-                                "type": "chart",
-                                "data": {
-                                    "chartType": kwargs.get("chart_type", "bar").lower(),
-                                    "title": kwargs.get("title", ""),
-                                    "description": kwargs.get("description", ""),
-                                    "xAxisKey": kwargs.get("x_axis_key", "name"),
-                                    "data": data,
-                                    "chartConfig": chart_config,
-                                },
-                            }
-                            break
-                    if visualization: break
-            if visualization: break
-        if getattr(msg, "name", None) in ["get_test", "search_tests", "get_aggregated_data_for_chart"]:
-            thinking.append(f"Used tool: {msg.name}")
-
-    submitted_answer = text.tool_calls[0]
-    kwargs = submitted_answer['args']
-    text = kwargs.get('answer', '')
-    followups = kwargs.get('hypotheses',[])
-    print(text)
-    print(followups)
-    session.messages.append(
-        Message(
-            message_id=message_id,
-            role="assistant",
-            content=text,
-            visualization=visualization,
-            query_used=query,
+    if session.session_id in _active_sessions:
+        raise HTTPException(
+            status_code=409,
+            detail="A query is already running on this session. Please wait for it to finish.",
         )
-    )
 
-    return ChatResponse(
-        session_id=session.session_id,
-        message_id=message_id,
-        text=text,
-        visualization=visualization,
-        followups=followups,
-        query_used=query,
-        thinking=thinking,
-    )
+    message_id = str(uuid4())
+    _active_sessions.add(session.session_id)
+
+    try:
+        session.messages.append(Message(role="user", content=req.message))
+
+        query = None
+
+        from src.agent import Agent
+        from langchain_core.messages import HumanMessage
+        config = {"configurable": {"thread_id": session.session_id}}
+        request_metrics = _text_metrics(req.message)
+        logger.info(
+            "[context-debug] chat request: chars=%s bytes=%s est_tokens=%s",
+            request_metrics["chars"],
+            request_metrics["bytes"],
+            request_metrics["est_tokens"],
+        )
+        similar_messages = get_similarity_by_query(req.message, req.session_id)
+        similar_metrics = _text_metrics(similar_messages)
+        logger.info(
+            "[context-debug] chat similar context passed to Agent: chars=%s bytes=%s est_tokens=%s",
+            similar_metrics["chars"],
+            similar_metrics["bytes"],
+            similar_metrics["est_tokens"],
+        )
+        tmp = Agent(req.message, similar_messages)
+        agent = tmp.create()
+        response = await agent.ainvoke({"messages": [HumanMessage(content=req.message)]}, config)
+
+        # Process output
+        messages = response['messages']
+        print(messages)
+        ai_msg = messages[-1]
+        text = ai_msg
+        # ai_msg = messages
+        # text = ai_msg
+        visualization = None
+        thinking = []
+
+        # Check if render_visualization was called to fetch the block
+        for msg in reversed(messages):
+            if getattr(msg, "name", None) == "render_visualization":
+                for prior_msg in reversed(messages):
+                    if prior_msg.type == "ai" and prior_msg.tool_calls:
+                        for tc in prior_msg.tool_calls:
+                            if tc['name'] == 'render_visualization':
+                                kwargs = tc['args']
+                                data = kwargs.get("data_json", "[]")
+                                if isinstance(data, str):
+                                    try:
+                                        data = json.loads(data)
+                                    except:
+                                        data = []
+                                chart_config = kwargs.get("chart_config_json", "{}")
+                                if isinstance(chart_config, str):
+                                    try:
+                                        chart_config = json.loads(chart_config)
+                                    except:
+                                        chart_config = {}
+                                visualization = {
+                                    "type": "chart",
+                                    "data": {
+                                        "chartType": kwargs.get("chart_type", "bar").lower(),
+                                        "title": kwargs.get("title", ""),
+                                        "description": kwargs.get("description", ""),
+                                        "xAxisKey": kwargs.get("x_axis_key", "name"),
+                                        "data": data,
+                                        "chartConfig": chart_config,
+                                    },
+                                }
+                                break
+                        if visualization: break
+                if visualization: break
+            if getattr(msg, "name", None) in ["get_test", "search_tests", "get_aggregated_data_for_chart"]:
+                thinking.append(f"Used tool: {msg.name}")
+
+        submitted_answer = text.tool_calls[0]
+        kwargs = submitted_answer['args']
+        text = kwargs.get('answer', '')
+        followups = kwargs.get('hypotheses',[])
+        print(text)
+        print(followups)
+        session.messages.append(
+            Message(
+                message_id=message_id,
+                role="assistant",
+                content=text,
+                visualization=visualization,
+                query_used=query,
+            )
+        )
+        _update_session_meta(session)
+
+        return ChatResponse(
+            session_id=session.session_id,
+            message_id=message_id,
+            text=text,
+            visualization=visualization,
+            followups=followups,
+            query_used=query,
+            thinking=thinking,
+        )
+    finally:
+        _active_sessions.discard(session.session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -516,4 +552,5 @@ async def delete_session(session_id: str):
     if session_id not in _sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     del _sessions[session_id]
+    _active_sessions.discard(session_id)
     return {"status": "deleted", "session_id": session_id}
