@@ -1012,7 +1012,7 @@ You can reference existing widgets when answering. If the user asks to rearrange
 
         If the data is too large, `result` is replaced by `summary` — a truncated preview:
         {{ "data_id": "6da86", "info": ["Found 3505 documents."], "summary": [{{"name": "Probe 1", "count": 937}}, ..., "<TRUNCATED 3495 items>"] }}
-        Even when summarized, the full dataset is stored and accessible via `data_id`.
+        IMPORTANT Even when summarized, the full dataset always is stored and accessible via `data_id`.
         Summaries truncate lists to 10 items, strings to 50 chars, and recurse into nested objects.
 
         Custom tools:
