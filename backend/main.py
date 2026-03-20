@@ -1,6 +1,17 @@
 import sys
+import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
+
+# Suppress noisy MCP ping-as-notification validation warnings.
+# The remote MCP server sends keepalive pings without an "id" field,
+# which the SDK misroutes as notifications and fails Pydantic validation.
+# The SDK uses logging.warning() (root logger), so we filter there.
+class _McpPingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Failed to validate notification" not in record.getMessage()
+
+logging.getLogger().addFilter(_McpPingFilter())
 
 # Ensure `backend/` is on sys.path so `routers.*` imports work when uvicorn
 # is invoked as `uvicorn backend.main:app` from the project root.
