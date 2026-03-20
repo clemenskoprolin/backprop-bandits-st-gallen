@@ -715,8 +715,47 @@ async def shutdown_mcp_client():
     mcp_client = None
 
 
+def _patch_dangling_tool_calls(messages: list) -> list:
+    """Ensure every AI message with tool_calls has matching ToolMessage responses.
+
+    When a request is cancelled mid-stream, the checkpoint may contain an AI
+    message with tool_calls but no corresponding ToolMessage results.  Claude's
+    API rejects such histories with a 400 error.  This helper appends synthetic
+    ToolMessages for any orphaned tool calls so the conversation stays valid.
+    """
+    patched = list(messages)
+    i = 0
+    while i < len(patched):
+        msg = patched[i]
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            # Collect the tool_call ids that need results
+            expected_ids = {tc["id"] for tc in msg.tool_calls}
+            # Look at the immediately following messages for ToolMessages
+            j = i + 1
+            while j < len(patched) and getattr(patched[j], "type", None) == "tool":
+                expected_ids.discard(getattr(patched[j], "tool_call_id", None))
+                j += 1
+            # If any tool_call ids are still unmatched, inject synthetic results
+            if expected_ids:
+                synthetic = []
+                for tc in msg.tool_calls:
+                    if tc["id"] in expected_ids:
+                        synthetic.append(
+                            ToolMessage(
+                                content="[Cancelled — no result available]",
+                                tool_call_id=tc["id"],
+                                name=tc["name"],
+                            )
+                        )
+                # Insert right after the AI message (at position i+1)
+                for idx, sm in enumerate(synthetic):
+                    patched.insert(i + 1 + idx, sm)
+        i += 1
+    return patched
+
+
 def call_model(state: AgentState):
-    messages = state["messages"]
+    messages = _patch_dangling_tool_calls(state["messages"])
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=system_prompt)] + messages
     metrics = _message_metrics(messages)
@@ -782,7 +821,7 @@ async def finish_and_visualize_node(state: AgentState):
 
 
 def output_node(state: AgentState):
-    messages = state["messages"]
+    messages = _patch_dangling_tool_calls(state["messages"])
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=output_system_prompt)] + messages
     # Claude requires conversation to end with a user message after tool results
@@ -847,7 +886,7 @@ def output_node(state: AgentState):
 
 
 def visualizer(state: AgentState):
-    messages = state["messages"]
+    messages = _patch_dangling_tool_calls(state["messages"])
     if not messages or messages[0].type != "system":
         messages = [SystemMessage(content=visualizer_system_prompt)] + messages
     # Claude requires conversation to end with a user message

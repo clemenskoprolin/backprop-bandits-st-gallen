@@ -206,7 +206,10 @@ async def chat_stream(req: ChatRequest):
             )
             tmp = Agent(req.message, similar_messages, dashboard_widgets=dashboard_ctx)
             agent = tmp.create()
-            config = {"configurable": {"thread_id": session.session_id}, "recursion_limit": 50}
+            config = {
+                "configurable": {"thread_id": session.session_id},
+                "recursion_limit": 50,
+            }
 
             full_text = ""
             visualization = None
@@ -463,7 +466,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
         from src.agent import Agent
         from langchain_core.messages import HumanMessage
 
-        config = {"configurable": {"thread_id": session.session_id}, "recursion_limit": 50}
+        config = {
+            "configurable": {"thread_id": session.session_id},
+            "recursion_limit": 50,
+        }
         request_metrics = _text_metrics(req.message)
         logger.info(
             "[context-debug] chat request: chars=%s bytes=%s est_tokens=%s",
