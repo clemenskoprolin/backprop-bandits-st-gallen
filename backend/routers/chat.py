@@ -446,11 +446,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
                                 if resolved is not None:
                                     data = resolved
                             if isinstance(data, str):
-                                    try:
-                                        data = json.loads(data)
-                                    except:
-                                        data = []
-                                chart_config = kwargs.get("chart_config_json", "{}")
+                                try:
+                                    data = json.loads(data)
+                                except:
+                                    data = []
+                            chart_config = kwargs.get("chart_config_json", "{}")
                                 if isinstance(chart_config, str):
                                     try:
                                         chart_config = json.loads(chart_config)
