@@ -334,8 +334,8 @@ def render_visualization(
     chart_type: str,
     title: str,
     x_axis_key: str,
-    data_json: str,
     chart_config_json: str,
+    data_json: str = "",
     description: str = "",
     replace_widget_id: str = "",
     widget_size: str = "1x2",
@@ -384,6 +384,8 @@ def render_visualization(
                 "render_visualization: unknown data_id %s, falling back to data_json",
                 data_id,
             )
+    if not data_json:
+        return "Error: either data_json or a valid data_id must be provided."
     return "Visualization successfully rendered on UI."
 
 
